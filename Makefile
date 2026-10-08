@@ -6,7 +6,7 @@ endif
 .PHONY: data api web test
 
 data:
-	@echo "data module not built yet (later module)"
+	$(PY) -m backend.data.generator
 
 api:
 	$(PY) -m uvicorn backend.api.main:app --reload --port 8000

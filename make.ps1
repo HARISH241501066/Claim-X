@@ -5,7 +5,7 @@ $py = Join-Path $PSScriptRoot 'backend\.venv\Scripts\python.exe'
 Set-Location $PSScriptRoot
 
 switch ($Target) {
-    'data' { Write-Host 'data module not built yet (later module)' }
+    'data' { & $py -m backend.data.generator }
     'api'  { & $py -m uvicorn backend.api.main:app --reload --port 8000 }
     'web'  { npm --prefix frontend run dev }
     'test' {
