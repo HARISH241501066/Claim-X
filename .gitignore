@@ -10,3 +10,8 @@ backend/ground_truth.csv
 backend/metrics.json
 backend/*.metrics.json
 frontend/e2e/screenshots/
+backend/data/kaggle/
+backend/audit.archive/
+.coverage
+coverage.xml
+htmlcov/
