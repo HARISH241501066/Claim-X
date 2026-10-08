@@ -1,15 +1,18 @@
 import { Suspense, lazy, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { getBrief, getCase, getGraph } from '../api'
+import { getBrief, getCase, getGraph, getMembers } from '../api'
+import AssignControl, { AssignmentBadge } from '../components/AssignControl'
 import Async from '../components/Async'
 import Brief from '../components/Brief'
 import DetectorChips from '../components/DetectorChips'
 import EvidenceList from '../components/EvidenceList'
 import OutboundPanel from '../components/OutboundPanel'
-import ReviewPanel from '../components/ReviewPanel'
+import ReviewPanel, { AiRecommendation } from '../components/ReviewPanel'
+import { CaseReportButton } from '../components/ReportButtons'
 import RiskPanel from '../components/RiskPanel'
 import Timeline from '../components/Timeline'
 import { Badge, Card, ConfidenceBadge, Skeleton, StatusBadge } from '../components/ui'
+import { useAuth } from '../lib/authContext'
 import { priority as fmtPriority, rupees } from '../lib/format'
 import { useApi } from '../lib/useApi'
 
@@ -46,6 +49,51 @@ function Header({ detail }) {
         <ConfidenceBadge level={detail.confidence?.level} reasons={detail.confidence?.reasons} />
       </div>
     </header>
+  )
+}
+
+/** Who holds the case, the team lead's assignment control, and the report download (when allowed). */
+function AssignmentPanel({ detail, onChanged }) {
+  const { user } = useAuth()
+  const access = detail.access
+  const members = useApi(
+    (signal) => (access?.can_assign ? getMembers(user.unit_id, signal) : Promise.resolve([])),
+    [access?.can_assign, user.unit_id],
+  )
+  if (!access) return null
+  return (
+    <section aria-labelledby="assignment-title" data-testid="assignment-panel" className="rounded-xl border border-line bg-surface p-4">
+      <h2 id="assignment-title" className="text-sm font-semibold text-ink">
+        Assignment
+      </h2>
+      <p className="mt-2 text-sm text-ink-2" data-testid="assignment-summary">
+        {access.unit_name ?? 'Not routed to a unit'} · {access.assignee_name ? `with ${access.assignee_name}` : 'not assigned yet'}
+      </p>
+      <div className="mt-2">
+        <AssignmentBadge status={access.assignment_status} />
+      </div>
+      {access.can_assign && members.data && (
+        <div className="mt-3">
+          <AssignControl caseId={detail.case_id} members={members.data} assigneeId={access.assignee_id} onDone={onChanged} />
+        </div>
+      )}
+      {access.can_report && (
+        <div className="mt-3">
+          <CaseReportButton caseId={detail.case_id} />
+        </div>
+      )}
+    </section>
+  )
+}
+
+function NoDecisionRights() {
+  return (
+    <section data-testid="read-only-note" className="rounded-xl border border-line bg-surface p-4 text-sm text-ink-2">
+      <p className="font-medium text-ink">You are viewing this case</p>
+      <p className="mt-1 text-xs">
+        Only the assigned investigator or the unit&apos;s team lead can record a decision or draft messages for it.
+      </p>
+    </section>
   )
 }
 
@@ -102,8 +150,16 @@ export default function CaseDetail() {
 
                 <aside className="min-w-0 space-y-6 lg:sticky lg:top-6 lg:self-start">
                   <RiskPanel prediction={d.prediction} horizon={horizon} onHorizon={setHorizon} />
-                  <ReviewPanel key={d.case_id} detail={d} onChanged={() => setVersion((v) => v + 1)} />
-                  <OutboundPanel key={`out-${d.case_id}`} detail={d} />
+                  <AssignmentPanel key={`assign-${d.case_id}-${version}`} detail={d} onChanged={() => setVersion((v) => v + 1)} />
+                  {d.access?.can_decide === false ? (
+                    <>
+                      <AiRecommendation detail={d} />
+                      <NoDecisionRights />
+                    </>
+                  ) : (
+                    <ReviewPanel key={d.case_id} detail={d} onChanged={() => setVersion((v) => v + 1)} />
+                  )}
+                  {d.access?.can_outbound !== false && <OutboundPanel key={`out-${d.case_id}`} detail={d} />}
                 </aside>
               </div>
             </>

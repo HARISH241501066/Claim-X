@@ -22,7 +22,7 @@ cp .env.example .env
 
 ## Using the workbench
 Start the API (`make api`, about 5 seconds to build the data and analysis) and the web app (`make web`), then open http://localhost:5173.
-Overview shows the headline numbers, Queue ranks cases against your team's hours, and each case opens with its evidence, network, timeline, risk estimate and brief. Every decision or priority change needs your name and a reason and is written to the audit log (`backend/audit.db`; set `CLAIMSHIELD_AUDIT_PATH` to use another file).
+Overview shows the headline numbers, Queue ranks cases against your team's hours, and each case opens with its evidence, network, timeline, risk estimate and brief. Every decision or priority change is recorded under the account you signed in with, needs a reason, and is written to the audit log (`backend/audit.db`; set `CLAIMSHIELD_AUDIT_PATH` to use another file).
 
 ### Optional: let an LLM write the brief
 Copy `.env.example` to `.env` (git ignores it) and set:
@@ -43,3 +43,22 @@ A key on its own does nothing: `LLM_PROVIDER` must name a provider. Only a maske
 - **By email (AWS SNS), urgent cases only:** a case with a critical finding (a phantom service), an investigation-risk band of High, or a place in the top 3 of the queue. A case in the top 5 that is none of these gets a high-priority item in the bell but no email. The email holds only the case ID, priority rank, number of agreeing detectors and a link, never names, member or claim IDs, amounts or scores, and is checked against the template before it is sent. One email per case per 24 hours. An email problem (timeout after 5 seconds, AWS error, missing config) is logged, marked `failed` on the notification, and never stops the pipeline or the in-app alerts.
 - **Set up:** create an SNS topic and a confirmed email subscription, then in `.env` (git-ignored) set `NOTIFY_EMAIL_ENABLED=true`, `SNS_TOPIC_ARN`, `AWS_REGION`, `APP_BASE_URL`, and the AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, or use a profile or role). The credential needs `sns:Publish` on that topic only. **Settings → Send test email** checks the whole path.
 - **Messages to providers and members:** "Request records" and "Verify with member" on a case create an editable draft. Words such as fraud, suspicious, investigation, risk, flagged, SIU and score are rejected. Approval needs an approver and a reason and only marks the message `sent_simulated`: nothing is ever sent for real. Every notification, email attempt, draft, edit and approval is in the audit log (`GET /audit?event_type=...`).
+
+### Sign-in, roles and units
+Everyone signs in (the only open endpoint is `/health`). Set two values in `.env` (git-ignored) before the first start; both are blank in `.env.example`:
+```
+JWT_SECRET=      # 32+ random characters; signs the 8-hour tokens, e.g. python -c "import secrets; print(secrets.token_hex(32))"
+DEMO_PASSWORD=   # the password given to every seeded demo user (8+ characters)
+```
+On an empty database the API seeds synthetic users: `admin`, and for each unit a lead and two investigators (`south_lead`, `south_inv1`, `south_inv2`, `north_lead`, `north_inv1`, `north_inv2`). Unit South covers Chennai, Bengaluru and Hyderabad; Unit North covers Delhi, Mumbai and Kolkata. Passwords are stored as bcrypt hashes. Five wrong passwords lock a username for five minutes.
+
+| Action | admin | team lead (own unit) | investigator |
+|---|---|---|---|
+| View a case | all | unit cases | assigned cases |
+| Assign, reassign, unassign | no | yes | no |
+| Decide, override priority, draft and approve messages | no | yes | assigned cases only |
+| Download a case report (PDF) | yes | unit cases | assigned cases only |
+| Download a unit report (PDF/CSV), see workload | yes | own unit | no |
+| Rerun, prewarm briefs, test email, manage users and units | yes | no | no |
+
+Each case is routed after every pipeline run to the unit that covers its main provider's city (for a ring, the provider with the most flagged claims); a case no unit covers is "unrouted" and only the admin sees it. Assignments survive reruns. Every rule is enforced in the API (`backend/access/permissions.py`, applied by `backend/api/deps.py`); the screens only reflect it. A refused attempt returns 403 and is written to the audit log, as are logins, assignments and every report download. Reports carry a confidentiality footer on every page.

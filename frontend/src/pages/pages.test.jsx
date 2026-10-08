@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import App from '../App'
 import {
-  briefData, caseDetail, evidenceRows, graphData, healthData, overviewData, providerItem, queueData, queueItem,
+  briefData, caseDetail, userFor, evidenceRows, graphData, healthData, overviewData, providerItem, queueData, queueItem,
 } from '../test/fixtures'
 
 vi.mock('../api', async (importOriginal) => ({
@@ -27,6 +27,13 @@ vi.mock('../api', async (importOriginal) => ({
   postOutbound: vi.fn(),
   putOutbound: vi.fn(),
   postApprove: vi.fn(),
+  getMe: vi.fn(),
+  getMembers: vi.fn(),
+  getWorkload: vi.fn(),
+  getUsers: vi.fn(),
+  getUnits: vi.fn(),
+  getUnrouted: vi.fn(),
+  login: vi.fn(),
 }))
 vi.mock('../components/NetworkGraph', () => ({
   default: ({ graph }) => <div data-testid="graph-stub">{graph.nodes.length} nodes</div>,
@@ -59,20 +66,23 @@ beforeEach(() => {
   api.getEvidence.mockResolvedValue(evidenceRows())
   api.getNotifications.mockResolvedValue({ notifications: [], unread_count: 0 })
   api.getOutbound.mockResolvedValue([])
+  api.setToken('test-token')
+  api.getMe.mockResolvedValue(userFor('admin'))
+  api.getMembers.mockResolvedValue([])
 })
 
 describe('shell', () => {
-  it('has a left navigation with Overview and Queue, and marks the current page', async () => {
+  it('has a left navigation with Overview and All Cases, and marks the current page', async () => {
     open('/queue')
-    const nav = screen.getByRole('navigation', { name: 'Main' })
+    const nav = await screen.findByRole('navigation', { name: 'Main' })
     expect(within(nav).getByRole('link', { name: 'Overview' })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: 'Queue' })).toHaveAttribute('aria-current', 'page')
+    expect(within(nav).getByRole('link', { name: 'All Cases' })).toHaveAttribute('aria-current', 'page')
     await screen.findAllByTestId('queue-row')
   })
 
-  it('shows a not-found page for an unknown address', () => {
+  it('shows a not-found page for an unknown address', async () => {
     open('/nowhere')
-    expect(screen.getByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
   })
 })
 
@@ -93,7 +103,7 @@ describe('Overview page', () => {
   it('shows a loading state first and never a blank page', async () => {
     api.getOverview.mockReturnValue(new Promise(() => {}))
     open('/')
-    expect(screen.getByRole('heading', { name: 'Overview' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Overview' })).toBeInTheDocument()
     expect(screen.getByRole('status', { name: 'Loading overview' })).toBeInTheDocument()
   })
 
@@ -116,11 +126,10 @@ describe('Overview page', () => {
 describe('Queue page', () => {
   it('asks for the default capacity and weights, then lists the ranked cases', async () => {
     open('/queue')
-    expect(screen.getByRole('status', { name: 'Loading the queue' })).toBeInTheDocument()
     const rows = await screen.findAllByTestId('queue-row')
     expect(rows.map((r) => r.dataset.case)).toEqual(['CASE-0001', 'CASE-0003', 'CASE-0005'])
     expect(api.getQueue).toHaveBeenCalledWith(
-      { capacity: 40, weights: 'risk:0.3,dollars:0.25,impact:0.15,severity:0.15,evidence:0.15', include_decided: false },
+      { capacity: 40, weights: 'risk:0.3,dollars:0.25,impact:0.15,severity:0.15,evidence:0.15', include_decided: false, view: undefined },
       expect.any(AbortSignal),
     )
     expect(screen.getByTestId('queue-summary')).toHaveTextContent('2 scheduled (13 h of 40 h) · 1 in backlog')
@@ -278,11 +287,10 @@ describe('Case detail page', () => {
     await user.click(screen.getByRole('button', { name: 'Open investigation' }))
     expect(screen.getByTestId('decision-error')).toBeInTheDocument()
     expect(api.postDecision).not.toHaveBeenCalled()
-    await user.type(screen.getByLabelText('Your name'), 'Asha Rao')
     await user.type(screen.getByLabelText('Reason (required)'), 'Needs verification')
     await user.click(screen.getByRole('button', { name: 'Open investigation' }))
     expect(api.postDecision).toHaveBeenCalledWith('CASE-0001', {
-      action: 'escalate_for_investigation', reason: 'Needs verification', reviewer: 'Asha Rao',
+      action: 'escalate_for_investigation', reason: 'Needs verification',
     })
     await waitFor(() => expect(screen.getByTestId('status-badge')).toHaveTextContent('Escalated for investigation'))
     expect(screen.getByTestId('decision-confirmation')).toHaveTextContent('Recorded')

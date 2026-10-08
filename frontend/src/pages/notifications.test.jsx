@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import App from '../App'
 import {
-  briefData, caseDetail, evidenceRows, graphData, healthData, overviewData, queueData,
+  briefData, caseDetail, evidenceRows, graphData, healthData, overviewData, queueData, userFor,
 } from '../test/fixtures'
 
 vi.mock('../api', async (importOriginal) => ({
@@ -25,6 +25,13 @@ vi.mock('../api', async (importOriginal) => ({
   postOutbound: vi.fn(),
   putOutbound: vi.fn(),
   postApprove: vi.fn(),
+  getMe: vi.fn(),
+  getMembers: vi.fn(),
+  getUsers: vi.fn(),
+  getUnits: vi.fn(),
+  getUnrouted: vi.fn(),
+  postRerun: vi.fn(),
+  postPrewarm: vi.fn(),
 }))
 vi.mock('../components/NetworkGraph', () => ({ default: () => <div data-testid="graph-stub" /> }))
 vi.mock('../components/FindingsChart', () => ({ default: () => <div data-testid="chart-stub" /> }))
@@ -54,6 +61,12 @@ beforeEach(() => {
   api.getEvidence.mockResolvedValue(evidenceRows())
   api.getNotifications.mockResolvedValue({ notifications: [], unread_count: 0 })
   api.getOutbound.mockResolvedValue([])
+  api.setToken('test-token')
+  api.getMe.mockResolvedValue(userFor('admin'))
+  api.getMembers.mockResolvedValue([])
+  api.getUsers.mockResolvedValue([userFor('admin')])
+  api.getUnits.mockResolvedValue([{ id: 1, name: 'Unit South', region: ['Chennai'] }])
+  api.getUnrouted.mockResolvedValue([])
 })
 
 const note = (over = {}) => ({
@@ -75,7 +88,7 @@ describe('notification bell', () => {
     api.getNotifications.mockResolvedValue(bellData())
     open('/queue')
     expect(await screen.findByTestId('unread-count')).toHaveTextContent('3')
-    expect(api.getNotifications).toHaveBeenCalledWith({ role: 'siu' }, expect.any(AbortSignal))
+    expect(api.getNotifications).toHaveBeenCalledWith({}, expect.any(AbortSignal))
     await userEvent.click(screen.getByRole('button', { name: /Notifications, 3 unread/ }))
     const panel = screen.getByTestId('notification-panel')
     const headings = within(panel).getAllByRole('heading', { level: 3 }).map((h) => h.textContent.replace(/\s*\d+$/, ''))
@@ -88,26 +101,23 @@ describe('notification bell', () => {
     expect(within(items[0]).getByRole('link')).toHaveAttribute('href', '/cases/CASE-0001')
   })
 
-  it('marks an opened item read, and "Mark all read" asks the server for the current role', async () => {
+  it('marks an opened item read, and "Mark all read" asks the server to clear your own notifications', async () => {
     api.getNotifications.mockResolvedValue(bellData())
     api.postNotificationRead.mockResolvedValue({})
     api.postReadAll.mockResolvedValue({ marked: 3 })
     open('/queue')
     await userEvent.click(await screen.findByRole('button', { name: /Notifications, 3 unread/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Mark all read' }))
-    expect(api.postReadAll).toHaveBeenCalledWith('siu')
+    expect(api.postReadAll).toHaveBeenCalledTimes(1)
     await userEvent.click(within(screen.getByTestId('notification-panel')).getAllByRole('link')[0])
     expect(api.postNotificationRead).toHaveBeenCalledWith(3)
   })
 
-  it('shows no count when everything is read, and reads the other inbox for another role', async () => {
+  it('shows no count when everything is read', async () => {
     open('/queue')
     await screen.findAllByTestId('queue-row')
     expect(screen.queryByTestId('unread-count')).toBeNull()
-    await userEvent.selectOptions(screen.getByLabelText('Viewing as'), 'manager')
-    await waitFor(() =>
-      expect(api.getNotifications).toHaveBeenLastCalledWith({ role: 'manager' }, expect.any(AbortSignal)),
-    )
+    expect(screen.queryByLabelText('Viewing as')).toBeNull() // there is no role switch: you see your own inbox
   })
 
   it('does not break the page when the notifications cannot be loaded', async () => {
@@ -119,16 +129,17 @@ describe('notification bell', () => {
   })
 })
 
-describe('settings', () => {
+describe('system page', () => {
   it('sends a test email and shows the result, or the error', async () => {
     api.postTestEmail.mockResolvedValueOnce({ ok: true, status: 'sent', detail: 'Test email published to the SNS topic.' })
-    open('/settings')
-    await userEvent.click(await screen.findByRole('button', { name: 'Send test email' }))
-    expect(await screen.findByTestId('test-email-result')).toHaveTextContent('Success. Test email published')
+    open('/system')
+    const card = (await screen.findByRole('button', { name: 'Send test email' })).closest('section')
+    await userEvent.click(within(card).getByRole('button', { name: 'Send test email' }))
+    expect(await within(card).findByTestId('task-result')).toHaveTextContent('Success. Test email published')
     api.postTestEmail.mockResolvedValueOnce({ ok: false, status: 'failed', detail: 'Sending failed: NoCredentialsError.' })
-    await userEvent.click(screen.getByRole('button', { name: 'Send test email' }))
+    await userEvent.click(within(card).getByRole('button', { name: 'Send test email' }))
     await waitFor(() =>
-      expect(screen.getByTestId('test-email-result')).toHaveTextContent('Not sent. Sending failed: NoCredentialsError.'),
+      expect(within(card).getByTestId('task-result')).toHaveTextContent('Not sent. Sending failed: NoCredentialsError.'),
     )
   })
 })
@@ -147,7 +158,7 @@ describe('messages to providers and members', () => {
     open('/cases/CASE-0001')
     await userEvent.click(await screen.findByRole('button', { name: 'Request records' }))
     expect(api.postOutbound).toHaveBeenCalledWith('CASE-0001', {
-      template: 'records_request', recipient_type: 'provider', recipient_id: 'PRV-A01', created_by: 'reviewer',
+      template: 'records_request', recipient_type: 'provider', recipient_id: 'PRV-A01',
     })
     const box = await screen.findByTestId('outbound-draft')
     expect(within(box).getByRole('note')).toHaveTextContent(
@@ -167,11 +178,9 @@ describe('messages to providers and members', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Edit draft' }))
     const box = screen.getByTestId('outbound-draft')
     await userEvent.click(within(box).getByRole('button', { name: /Approve & send/ }))
-    expect(within(box).getByTestId('outbound-message')).toHaveTextContent('Enter the approver')
-    expect(api.postApprove).not.toHaveBeenCalled()
-    await userEvent.type(within(box).getByLabelText('Approver'), 'Asha Rao')
-    await userEvent.click(within(box).getByRole('button', { name: /Approve & send/ }))
+    expect(within(box).getByTestId('approver')).toHaveTextContent('You approve as System Admin')
     expect(within(box).getByTestId('outbound-message')).toHaveTextContent('A reason is required')
+    expect(api.postApprove).not.toHaveBeenCalled()
     await userEvent.type(within(box).getByLabelText(/Reason for approving/), 'Wording checked')
     await userEvent.click(within(box).getByRole('button', { name: /Approve & send/ }))
     expect(await within(box).findByText(/not allowed/)).toBeInTheDocument()
@@ -187,11 +196,10 @@ describe('messages to providers and members', () => {
     open('/cases/CASE-0001')
     await userEvent.click(await screen.findByRole('button', { name: 'Edit draft' }))
     const box = screen.getByTestId('outbound-draft')
-    await userEvent.type(within(box).getByLabelText('Approver'), 'Asha Rao')
     await userEvent.type(within(box).getByLabelText(/Reason for approving/), 'Wording checked')
     await userEvent.click(within(box).getByRole('button', { name: /Approve & send/ }))
     await waitFor(() =>
-      expect(api.postApprove).toHaveBeenCalledWith(7, { approved_by: 'Asha Rao', reason: 'Wording checked' }),
+      expect(api.postApprove).toHaveBeenCalledWith(7, { reason: 'Wording checked' }),
     )
     expect(await screen.findByText('Sent (simulated)')).toBeInTheDocument()
     expect(screen.queryByTestId('outbound-draft')).toBeNull()

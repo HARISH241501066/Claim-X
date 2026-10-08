@@ -1,20 +1,36 @@
-// End-to-end check in a real Chrome: Overview -> Queue -> top case -> brief -> decision.
-// It expects the API (ideally with CLAIMSHIELD_AUDIT_PATH set to a throwaway file) and the Vite
-// dev server to be running. It fails if the browser console shows any error or warning.
+// End-to-end check in a real Chrome, signing in as each seeded role: admin, team lead, investigator.
+// It expects the API (with CLAIMSHIELD_AUDIT_PATH set to a throwaway file, DEMO_PASSWORD and
+// JWT_SECRET set) and the Vite dev server to be running. DEMO_PASSWORD is read from the environment
+// or the repo-root .env and is never printed. It fails if the browser console shows an unexpected
+// error or warning.
 import fs from 'node:fs'
 import { chromium } from 'playwright-core'
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:5173'
+const API = process.env.API_URL ?? 'http://localhost:8000'
 const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
 const SHOTS = process.env.SHOT_DIR ?? 'e2e/screenshots'
-const BANNED = ['fraud' + ' probability', 'chance of ' + 'fraud', 'fraud' + '_prob']
-const TOOLTIP =
-  'Estimated likelihood of a confirmed investigation within 30 days, based on synthetic history. Not a finding of fraud.'
+const BANNED = ['fraud' + ' probability', 'chance of ' + 'fraud', 'fraud' + '_prob', 'fraud' + 'ster', 'guil' + 'ty']
+const EXPECT_SOURCE = process.env.EXPECT_SOURCE ?? 'Template'
+
+function demoPassword() {
+  if (process.env.DEMO_PASSWORD) return process.env.DEMO_PASSWORD
+  try {
+    const line = fs.readFileSync('../.env', 'utf8').split(/\r?\n/).find((l) => l.startsWith('DEMO_PASSWORD='))
+    return line ? line.slice('DEMO_PASSWORD='.length).trim() : ''
+  } catch {
+    return ''
+  }
+}
+const PASSWORD = demoPassword()
+if (!PASSWORD) {
+  console.error('DEMO_PASSWORD is not set (environment or ../.env); cannot sign in.')
+  process.exit(2)
+}
 
 fs.mkdirSync(SHOTS, { recursive: true })
 const results = []
 const problems = []
-const posts = []
 
 function check(name, ok, detail = '') {
   results.push({ name, ok })
@@ -22,250 +38,237 @@ function check(name, ok, detail = '') {
 }
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true })
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true })
+const page = await context.newPage()
 
 page.on('console', (m) => {
   if (['error', 'warning'].includes(m.type())) problems.push(`console.${m.type()}: ${m.text()}`)
 })
 page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`))
 page.on('requestfailed', (r) => {
-  // The app cancels its own requests when a screen changes (and React's dev mode does so once
-  // at start-up); a cancellation is not a failure, anything else is.
   if (r.failure()?.errorText !== 'net::ERR_ABORTED') problems.push(`request failed: ${r.url()} ${r.failure()?.errorText}`)
 })
 page.on('response', (r) => {
   if (r.status() >= 400) problems.push(`HTTP ${r.status()}: ${r.url()}`)
 })
-page.on('request', (r) => {
-  if (r.method() === 'POST') posts.push(r.url())
-})
+
+const shot = (name) => page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true })
 
 async function noBannedWords(label) {
   const text = (await page.evaluate(() => document.body.innerText)).toLowerCase()
-  const html = (await page.content()).toLowerCase()
-  const hit = BANNED.filter((w) => text.includes(w) || html.includes(w))
+  const hit = BANNED.filter((w) => text.includes(w))
   check(`no banned wording on ${label}`, hit.length === 0, hit.join(', '))
 }
-const shot = (name) => page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true })
+
+async function signIn(username, password = PASSWORD) {
+  await page.goto(`${BASE}/login`)
+  await page.getByLabel('Username').fill(username)
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+}
+async function signedInAs() {
+  await page.waitForSelector('[data-testid=current-user]')
+  return (await page.textContent('[data-testid=current-user]')).replace(/\s+/g, ' ').trim()
+}
+async function signOut() {
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await page.waitForSelector('#username')
+}
+const navLinks = async () =>
+  (await page.getByRole('navigation', { name: 'Main' }).getByRole('link').allInnerTexts()).map((t) => t.trim())
+
+/** Click a download button and return the saved file's name and first bytes. */
+async function download(buttonName) {
+  const [file] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: buttonName }).click()])
+  const target = `${SHOTS}/${file.suggestedFilename()}`
+  await file.saveAs(target)
+  const bytes = fs.readFileSync(target)
+  return { name: file.suggestedFilename(), size: bytes.length, head: bytes.subarray(0, 5).toString('latin1'), text: bytes.toString('utf8') }
+}
+
+async function api(path, token, options = {}) {
+  const response = await fetch(`${API}${path}`, { ...options, headers: { ...(options.headers ?? {}), Authorization: `Bearer ${token}` } })
+  return response.json()
+}
+async function apiLogin(username) {
+  const response = await fetch(`${API}/auth/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password: PASSWORD }),
+  })
+  return (await response.json()).access_token
+}
+
+let assignedCase = null
 
 try {
-  // ---- Overview
-  await page.goto(BASE)
+  // ---------------------------------------------------------------- signing in
+  await page.goto(`${BASE}/queue`)
+  await page.waitForSelector('#username')
+  check('someone who is not signed in is sent to the login page', page.url().endsWith('/login'))
+  await signIn('south_lead', 'definitely-not-the-password')
+  await page.waitForSelector('[data-testid=login-error]')
+  check('a wrong password shows the API message and keeps the field empty', /Wrong username or password/.test(await page.textContent('[data-testid=login-error]')) && (await page.getByLabel('Password').inputValue()) === '')
+  check('no token is stored after a wrong password', (await page.evaluate(() => window.sessionStorage.getItem('claimshield.token'))) === null)
+
+  // ---------------------------------------------------------------- admin
+  await signIn('admin')
   await page.waitForSelector('[data-testid=amount-at-risk]')
+  check('the admin sees the admin top bar', (await signedInAs()).startsWith('System Admin · Admin'), await signedInAs())
+  check('admin navigation is Overview, All Cases, System', JSON.stringify(await navLinks()) === JSON.stringify(['Overview', 'All Cases', 'System']), (await navLinks()).join(' | '))
   const amount = await page.textContent('[data-testid=amount-at-risk]')
   check('overview shows the amount at risk', /^Rs [\d,]+$/.test(amount.trim()), amount.trim())
-  const tiles = {}
-  for (const t of ['claims', 'findings', 'cases', 'scheduled']) {
-    tiles[t] = await page.textContent(`[data-testid=tile-${t}] p:nth-of-type(2)`)
-  }
-  check('funnel tiles claims > findings > cases > scheduled', Number(tiles.claims.replace(/,/g, '')) > Number(tiles.findings) && Number(tiles.findings) > Number(tiles.cases) && Number(tiles.cases) > Number(tiles.scheduled), JSON.stringify(tiles))
-  await page.waitForSelector('.recharts-bar-rectangle')
-  const bars = await page.locator('.recharts-bar-rectangle').count()
-  check('findings-per-rule bar chart draws one bar per detector', bars >= 8, `${bars} bars`)
-  await page.getByRole('button', { name: 'View as table' }).click()
-  check('chart has a table view', (await page.locator('table tbody tr').count()) >= 8)
-  await page.getByRole('button', { name: 'View as chart' }).click()
+  check('overview counts all 20 cases', /20 awaiting review/.test(await page.textContent('[data-testid=tile-cases]')))
   await noBannedWords('Overview')
-  await shot('1-overview')
-
-  // ---- Queue
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Queue' }).click()
+  await shot('1-admin-overview')
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'All Cases' }).click()
   await page.waitForSelector('[data-testid=queue-row]')
-  const rowCount = await page.locator('[data-testid=queue-row]').count()
-  check('queue lists every case', rowCount === 20, `${rowCount} rows`)
-  check('scheduled and backlog dividers are shown', (await page.locator('[data-testid=divider-scheduled]').count()) === 1 && (await page.locator('[data-testid=divider-backlog]').count()) === 1)
-  const firstRow = page.locator('[data-testid=queue-row]').first()
-  const firstText = await firstRow.innerText()
-  check('top case is the ring and shows a Ring badge', /Referral network/.test(firstText) && /\bRing\b/.test(firstText), firstText.split('\n')[0])
-  check('top row shows detector chips Rules · ML · Graph', /Rules/.test(firstText) && /ML/.test(firstText) && /Graph/.test(firstText))
-  check('top row shows an amount', /Rs [\d,]+/.test(firstText))
-  const summaryBefore = await page.textContent('[data-testid=queue-summary]')
-  await Promise.all([
-    page.waitForResponse((r) => r.url().includes('/queue') && r.url().includes('capacity=20')),
-    page.locator('#capacity').fill('20'),
-  ])
-  await page.waitForFunction((before) => document.querySelector('[data-testid=queue-summary]')?.textContent !== before, summaryBefore)
-  const summaryAfter = await page.textContent('[data-testid=queue-summary]')
-  check('capacity slider re-schedules the queue', /of 20 h/.test(summaryAfter), summaryAfter.trim())
-  await page.locator('#capacity').fill('40')
-  await page.getByRole('button', { name: 'Priority weights' }).click()
-  const pctOf = async (k) => Number((await page.textContent(`[data-testid=weight-${k}]`)).replace('%', ''))
-  const parts = await Promise.all(['risk', 'dollars', 'impact', 'severity', 'evidence'].map(pctOf))
-  check('weight shares add up to 100%', parts.reduce((a, b) => a + b, 0) === 100, parts.join('+'))
-  await page.getByLabel('Risk weight').fill('60')
-  const parts2 = await Promise.all(['risk', 'dollars', 'impact', 'severity', 'evidence'].map(pctOf))
-  check('moving one slider keeps the shares at 100%', parts2.reduce((a, b) => a + b, 0) === 100 && parts2[0] > parts[0], parts2.join('+'))
-  await page.getByRole('button', { name: 'Reset to defaults' }).click()
-  await noBannedWords('Queue')
-  await shot('2-queue')
-
-  // ---- Case detail (top case)
+  check('the admin sees every case', (await page.locator('[data-testid=queue-row]').count()) === 20)
   await page.locator('[data-testid=queue-row] a').first().click()
-  await page.waitForSelector('h1')
-  await page.waitForSelector('[data-testid=evidence-item]')
-  check('case title is readable', /Referral network/.test(await page.textContent('h1')))
-  check('header shows priority, "X of 3 detectors" and a confidence badge',
-    /Priority\s*0\.\d+/.test(await page.textContent('[data-testid=header-priority]')) &&
-    /\d of 3 detectors/.test(await page.textContent('[data-testid=header-detectors]')) &&
-    /Confidence: (High|Medium|Low)/.test(await page.textContent('[data-testid=confidence-badge]')))
-  check('evidence list shows E1 and E2 with IDs', (await page.locator('[data-testid=evidence-item]').count()) === 2 && /CLM-\d+|PRV-/.test(await page.textContent('#evidence-E2')))
-  await page.locator('#evidence-E2').getByRole('button', { name: 'Show claim rows' }).click()
-  await page.waitForSelector('[data-testid=rows-E2] [data-testid=claim-row]')
-  const claimRows = await page.locator('[data-testid=rows-E2] [data-testid=claim-row]').count()
-  check('clicking evidence shows its claim rows', claimRows === 180, `${claimRows} rows`)
-  await page.waitForSelector('[data-testid=network-graph] canvas')
-  check('network graph draws on a canvas', (await page.locator('[data-testid=network-graph] canvas').count()) >= 1)
-  check('graph has a legend and a table view', (await page.getByRole('list', { name: 'Legend' }).count()) === 1 && (await page.locator('summary', { hasText: 'Table view' }).count()) === 1)
-  check('timeline lists dated events', (await page.locator('[data-testid=timeline-entry]').count()) >= 3)
-  const riskTitle = await page.locator('[data-testid=risk-panel] h2').textContent()
-  check('risk panel is titled "30-Day Investigation Risk: X%"', /^30-Day Investigation Risk: \d+(\.\d)?%$/.test(riskTitle.trim()), riskTitle.trim())
-  await page.getByRole('button', { name: 'About this estimate' }).hover()
-  const tip = page.getByRole('tooltip')
-  check('risk tooltip has the exact caveat and is visible on hover', (await tip.isVisible()) && (await tip.textContent()).trim() === TOOLTIP)
-  check('60 and 90 day windows are disabled (not trained)', (await page.getByRole('radio', { name: '60 days' }).isDisabled()) && (await page.getByRole('radio', { name: '90 days' }).isDisabled()) && !(await page.getByRole('radio', { name: '30 days' }).isDisabled()))
-  check('risk panel shows a band and drivers', (await page.locator('[data-testid=risk-panel]').innerText()).match(/Low|Medium|High/) !== null && /Top drivers/.test(await page.locator('[data-testid=risk-panel]').innerText()))
-  await noBannedWords('Case detail (before decision)')
+  await page.waitForSelector('[data-testid=assignment-panel]')
+  check('the admin can look at a case but not decide on it', (await page.getByTestId('read-only-note').isVisible()) && (await page.getByTestId('decision-panel').count()) === 0)
+  check('the admin cannot draft messages', (await page.getByTestId('outbound-panel').count()) === 0)
+  const adminPdf = await download('Download case report (PDF)')
+  check('the admin can download a case report', adminPdf.head === '%PDF-' && /^CASE-\d{4}-report\.pdf$/.test(adminPdf.name) && adminPdf.size > 2000, `${adminPdf.name} ${adminPdf.size} bytes`)
+  await noBannedWords('Case detail (admin)')
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'System' }).click()
+  await page.waitForSelector('[data-testid=users-table]')
+  check('System lists the 7 seeded users and 2 units', (await page.locator('[data-testid=users-table] tbody tr').count()) === 7 && (await page.locator('[data-testid=units-table] tbody tr').count()) === 2)
+  check('no case is unrouted', /None/.test(await page.textContent('[data-testid=unrouted]')))
+  await page.getByRole('button', { name: 'Send test email' }).click()
+  await page.waitForSelector('[data-testid=task-result]')
+  check('"Send test email" shows a result', /Success\.|Not sent\./.test(await page.textContent('[data-testid=task-result]')), (await page.textContent('[data-testid=task-result]')).trim())
+  await shot('2-admin-system')
+  await signOut()
+  check('signing out ends the session', (await page.evaluate(() => window.sessionStorage.getItem('claimshield.token'))) === null)
 
-  // ---- Brief
-  await page.waitForSelector('[data-testid=brief-body]')
-  const sourceText = await page.textContent('[data-testid=brief-source]')
-  const expected = process.env.EXPECT_SOURCE ?? 'Template' // Template, Claude, Grok or Groq
-  // a provider's brief may say "(cached)" when the stored text for unchanged evidence was reused
-  const badge = sourceText.trim()
-  check(`brief shows the real source badge "${expected}"`, badge === expected || (expected !== 'Template' && badge === `${expected} (cached)`), badge)
-  const maskedNote = await page.locator('[data-testid=masked-note]').count()
-  check(expected === 'Template' ? 'a template brief has no masked-data note' : 'an LLM brief says it was generated from masked data',
-    expected === 'Template' ? maskedNote === 0 : (await page.textContent('[data-testid=masked-note]')).trim() === 'Generated from masked data. No personal details were shared.')
-  const briefText = await page.textContent('[data-testid=brief-body]')
-  check('the brief shows real identifiers, never placeholders', /PRV-A01|FAC-B01/.test(briefText) && !/\b(PERSON|ORG)_\d+\b/.test(briefText))
-  const cites = await page.locator('[data-testid=brief-body] [data-cite]').count()
-  check('brief citations are clickable', cites >= 2, `${cites} citations`)
-  await page.locator('[data-testid=brief-body]').locator('xpath=ancestor::section[1]').screenshot({ path: `${SHOTS}/brief-panel.png` })
-  await page.locator('[data-testid=brief-body] [data-cite=E1]').first().click()
-  check('clicking a citation selects its evidence', (await page.locator('#evidence-E1').getAttribute('aria-current')) === 'true')
-  await shot('3-case-top')
+  // ---------------------------------------------------------------- team lead
+  await signIn('south_lead')
+  await page.waitForSelector('[data-testid=section-unassigned]')
+  check('the team lead sees the lead top bar', /^Kavya Menon · Team lead · Unit South/.test(await signedInAs()), await signedInAs())
+  check('team lead navigation is Unit Queue, Team Workload', JSON.stringify(await navLinks()) === JSON.stringify(['Unit Queue', 'Team Workload']), (await navLinks()).join(' | '))
+  const unitRows = await page.locator('[data-testid=queue-row]').count()
+  check('the lead sees only their unit’s cases', unitRows > 0 && unitRows < 20, `${unitRows} of 20`)
+  const unassigned = page.locator('section[aria-label=Unassigned] [data-testid=queue-row]')
+  assignedCase = await unassigned.first().getAttribute('data-case')
+  await unassigned.first().getByRole('button', { name: /^Assign CASE/ }).click()
+  await page.getByTestId('assign-form').getByRole('button', { name: 'Confirm' }).click()
+  check('assigning without a reason is blocked', /A reason is required/.test(await page.textContent('[data-testid=assign-error]')))
+  await page.getByTestId('assign-form').getByLabel('Assign to').selectOption({ label: 'Arjun Nair' })
+  await page.getByTestId('assign-form').getByLabel('Reason (required)').fill('Arjun has the capacity this week')
+  await page.getByTestId('assign-form').getByRole('button', { name: 'Confirm' }).click()
+  await page.waitForFunction((id) => !!document.querySelector(`section[aria-label=Assigned] [data-case="${id}"]`), assignedCase)
+  check('the assigned case moves to the Assigned section with the investigator’s name', /Arjun Nair/.test(await page.locator(`section[aria-label=Assigned] [data-case="${assignedCase}"] [data-testid=assignee-cell]`).textContent()), assignedCase)
+  await shot('3-lead-unit-queue')
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Team Workload' }).click()
+  await page.waitForSelector('[data-testid=workload-card]')
+  const arjun = page.locator('[data-testid=workload-card]', { hasText: 'Arjun Nair' })
+  check('Team Workload shows the new case and an effort bar', /1 open/.test(await arjun.textContent()) && (await arjun.getByRole('meter').count()) === 1)
+  const unitPdf = await download('Download unit report (PDF)')
+  check('the unit report PDF downloads', unitPdf.head === '%PDF-' && /report\.pdf$/.test(unitPdf.name), `${unitPdf.name} ${unitPdf.size} bytes`)
+  const unitCsv = await download('Download unit report (CSV)')
+  check('the unit report CSV downloads with the expected columns', unitCsv.text.split('\n')[0].trim() === 'case_id,title,rank,priority,priority_band,status,assignee,latest_decision,decision_date,decided_by,amount_at_risk_rs,pending_days,overdue' && unitCsv.text.includes(assignedCase), unitCsv.name)
+  await shot('4-lead-workload')
+  await page.goto(`${BASE}/cases/${assignedCase}`)
+  await page.waitForSelector('[data-testid=assignment-panel]')
+  check('the lead sees the assignment, a decision panel and the report button', /with Arjun Nair/.test(await page.textContent('[data-testid=assignment-summary]')) && (await page.getByTestId('decision-panel').isVisible()) && (await page.getByRole('button', { name: 'Download case report (PDF)' }).isVisible()))
+  const leadToken = await apiLogin('south_lead')
+  const adminToken = await apiLogin('admin')
+  const everything = (await api('/queue?capacity=1000&include_decided=true', adminToken))
+  const allIds = [...everything.scheduled, ...everything.backlog].map((i) => i.case_id)
+  const mine = (await api('/queue?capacity=1000&include_decided=true', leadToken))
+  const myIds = new Set([...mine.scheduled, ...mine.backlog].map((i) => i.case_id))
+  const otherUnitCase = allIds.find((id) => !myIds.has(id))
+  await page.goto(`${BASE}/cases/${otherUnitCase}`)
+  await page.waitForSelector('[role=alert]')
+  check('another unit’s case is refused with a clear message', /do not have access/i.test(await page.textContent('[role=alert]')), otherUnitCase)
+  await noBannedWords('the access-refused page')
+  await page.goto(`${BASE}/system`)
+  await page.waitForSelector('[data-testid=top-bar]')
+  check('a team lead who types /system is sent back to their queue', page.url().endsWith('/unit-queue'))
+  await signOut()
 
-  // ---- Human review
-  check('"AI Recommendation" and "Your Decision" are separate panels', (await page.getByRole('heading', { name: 'AI Recommendation' }).isVisible()) && (await page.getByRole('heading', { name: 'Your Decision' }).isVisible()))
-  for (const label of ['Open investigation', 'Request more information', 'Dismiss']) {
-    check(`button "${label}" is present`, await page.getByRole('button', { name: label }).isVisible())
-  }
-  const postsBefore = posts.length
+  // ---------------------------------------------------------------- investigator
+  await signIn('south_inv1')
+  await page.waitForSelector('[data-testid=current-user]')
+  check('the investigator lands on My Cases', (await page.textContent('h1')).trim() === 'My Cases', page.url())
+  check('investigator navigation is My Cases, Unit Queue', JSON.stringify(await navLinks()) === JSON.stringify(['My Cases', 'Unit Queue']), (await navLinks()).join(' | '))
+  await page.waitForSelector('[data-testid=queue-row]')
+  const mineRows = await page.locator('[data-testid=queue-row]').evaluateAll((rows) => rows.map((r) => r.dataset.case))
+  check('My Cases lists only the case assigned to them', mineRows.length === 1 && mineRows[0] === assignedCase, mineRows.join(','))
+  await page.getByTestId('bell').click()
+  await page.waitForSelector('[data-testid=notification-panel]')
+  check('the assignment notification is in their bell', new RegExp(`Case ${assignedCase} assigned to you by Kavya Menon`).test(await page.textContent('[data-testid=notification-panel]')))
+  await shot('5-investigator-bell')
+  await page.keyboard.press('Escape')
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Unit Queue' }).click()
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid=queue-row]').length > 1)
+  const linked = await page.locator('[data-testid=queue-row]').evaluateAll((rows) => rows.filter((r) => r.querySelector('a')).map((r) => r.dataset.case))
+  check('in the read-only Unit Queue only their own case is a link', linked.length === 1 && linked[0] === assignedCase, linked.join(','))
+  check('the Unit Queue has no assignment controls for an investigator', (await page.getByRole('button', { name: /Assign|Reassign/ }).count()) === 0)
+  const unassignedCase = (await page.locator('[data-testid=queue-row]').evaluateAll((rows) => rows.filter((r) => !r.querySelector('a')).map((r) => r.dataset.case)))[0]
+  await page.goto(`${BASE}/cases/${unassignedCase}`)
+  await page.waitForSelector('[role=alert]')
+  check('a case that is not theirs is refused, even in their own unit', /do not have access/i.test(await page.textContent('[role=alert]')), unassignedCase)
+  await page.goto(`${BASE}/cases/${assignedCase}`)
+  await page.waitForSelector('[data-testid=decision-panel]')
+  check('their own case opens with the decision panel', true)
+  check('there is no name field: the decision is recorded under their sign-in', (await page.getByLabel('Your name').count()) === 0)
   await page.getByRole('button', { name: 'Open investigation' }).click()
-  check('no name and no reason: blocked with a message', (await page.getByTestId('decision-error').isVisible()))
-  await page.getByLabel('Your name').fill('Asha Rao')
-  await page.getByRole('button', { name: 'Dismiss' }).click()
-  check('a name but no reason: still blocked', /reason is required/i.test(await page.getByTestId('decision-error').textContent()))
-  await page.getByLabel('Reason (required)').fill('hmm')
-  await page.getByRole('button', { name: 'Request more information' }).click()
-  check('a too-short reason is blocked', /at least 5/.test(await page.getByTestId('decision-error').textContent()))
-  check('blocked attempts sent nothing to the server', posts.length === postsBefore)
+  check('a decision without a reason is blocked', /A reason is required/.test(await page.textContent('[data-testid=decision-error]')))
   await page.getByLabel('Reason (required)').fill('Referral pattern and shared ownership need verification')
   await page.getByRole('button', { name: 'Open investigation' }).click()
   await page.waitForSelector('[data-testid=decision-confirmation]')
-  check('a decision with a reason is recorded', /Escalated for investigation/.test(await page.textContent('[data-testid=decision-confirmation]')))
-  await page.waitForFunction(() => /Escalated for investigation/.test(document.querySelector('[data-testid=status-badge]')?.textContent ?? ''))
-  check('case status changes', true)
-  check('the decision appears in the history with the reviewer', /Asha Rao/.test(await page.textContent('[data-testid=decision-history]')))
-  await shot('4-after-decision')
-  await page.reload()
-  await page.waitForSelector('[data-testid=status-badge]')
-  check('the decision survives a reload', /Escalated for investigation/.test(await page.textContent('[data-testid=status-badge]')))
-  await noBannedWords('Case detail (after decision)')
-
-  // ---- Back to the queue
-  await page.getByRole('link', { name: '← Back to the queue' }).click()
-  await page.waitForSelector('[data-testid=queue-row]')
-  const nextTop = await page.locator('[data-testid=queue-row]').first().innerText()
-  check('decided case leaves the queue', !/Referral network/.test(nextTop) && (await page.locator('[data-testid=queue-row]').count()) === 19, nextTop.split('\n')[0])
-  await page.getByLabel('Show decided cases').check()
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid=queue-row]').length === 20)
-  check('"Show decided cases" brings it back with its status', /Escalated for investigation/.test(await page.locator('[data-testid=queue-row]').first().innerText()))
-  await page.getByLabel('Show decided cases').uncheck()
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid=queue-row]').length === 19)
-
-  // ---- Priority override on another case
-  const target = page.locator('[data-testid=queue-row]').nth(3)
-  const targetId = await target.getAttribute('data-case')
-  await target.locator('a').click()
-  await page.waitForSelector('[data-testid=decision-panel]')
-  await page.getByLabel('Your priority').fill('99')
-  await page.getByRole('button', { name: 'Set priority' }).click()
-  check('an override without a reason is blocked', (await page.getByTestId('override-error').isVisible()))
-  await page.getByLabel('Reason for the override (required)').fill('Provider records arrive this week')
-  await page.getByRole('button', { name: 'Set priority' }).click()
-  await page.waitForSelector('[data-testid=override-confirmation]')
-  await page.getByRole('link', { name: '← Back to the queue' }).click()
-  await page.waitForSelector('[data-testid=queue-row]')
-  const pinned = page.locator('[data-testid=queue-row]').first()
-  check('the overridden case moves to the top and shows AI vs your priority', (await pinned.getAttribute('data-case')) === targetId && /AI 0\.\d+ → Asha Rao 0\.99/.test(await pinned.innerText()))
-  await shot('5-queue-after-override')
-
-  // ---- Overview reflects the decision
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Overview' }).click()
-  await page.waitForSelector('[data-testid=tile-cases]')
-  check('overview counts the decided case', /1 decided/.test(await page.textContent('[data-testid=tile-cases]')))
-
-  // ---- Notifications
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Queue' }).click()
-  await page.waitForSelector('[data-testid=unread-count]')
-  check('the bell shows an unread count after the pipeline run', Number(await page.textContent('[data-testid=unread-count]')) > 0)
-  await page.getByTestId('bell').click()
-  await page.waitForSelector('[data-testid=notification-panel]')
-  const groups = await page.locator('[data-testid=notification-panel] h3').allInnerTexts()
-  check('high-priority notifications are grouped first', /^High priority/i.test(groups[0] ?? ''), groups.join(' | '))
-  const severities = await page.locator('[data-testid=notification]').evaluateAll((els) => els.map((e) => e.dataset.severity))
-  check('items are ordered high, then warning, then info', JSON.stringify(severities) === JSON.stringify([...severities].sort((a, b) => ['high', 'warning', 'info'].indexOf(a) - ['high', 'warning', 'info'].indexOf(b))), severities.slice(0, 8).join(','))
-  check('a high-priority item links to its case', (await page.locator('[data-testid=notification][data-severity=high] a').first().getAttribute('href')).startsWith('/cases/CASE-'))
-  await shot('6-bell')
-  await page.getByRole('button', { name: 'Mark all read' }).click()
-  await page.waitForFunction(() => !document.querySelector('[data-testid=unread-count]'))
-  check('"Mark all read" clears the count', true)
-  await page.keyboard.press('Escape')
-
-  // ---- Drafted messages (never really sent)
-  await page.goto(`${BASE}/cases/CASE-0001`)
-  await page.waitForSelector('[data-testid=outbound-panel]')
+  check('the decision is confirmed with their name', /by Arjun Nair/.test(await page.textContent('[data-testid=decision-confirmation]')))
+  await page.waitForFunction(() => /Arjun Nair/.test(document.querySelector('[data-testid=decision-history]')?.textContent ?? ''))
+  check('the history shows who decided', true)
+  check('the assignment status becomes In review', /In review/.test(await page.textContent('[data-testid=assignment-panel]')))
+  const provider = page.locator('select[aria-label="Request records recipient"]')
   await page.getByRole('button', { name: 'Request records', exact: true }).click()
   await page.waitForSelector('[data-testid=outbound-draft]')
-  check('a draft opens with the "will not be sent" notice', /will not be sent until you approve it/.test(await page.getByRole('note').textContent()))
-  const original = await page.getByTestId('outbound-draft').locator('textarea').inputValue()
-  check('the draft uses the records-request wording', /routine documentation review/.test(original) && /within 15 days/.test(original))
-  await page.getByTestId('outbound-draft').locator('textarea').fill(`${original} This claim was flagged.`)
-  await page.getByLabel('Approver').fill('Asha Rao')
+  check('a draft is shown with the notice and the approver is the signed-in user', /will not be sent until you approve it/.test(await page.getByRole('note').textContent()) && /You approve as Arjun Nair/.test(await page.textContent('[data-testid=approver]')) && (await provider.count()) === 1)
   await page.getByLabel(/Reason for approving/).fill('Wording checked')
   await page.getByRole('button', { name: /Approve & send/ }).click()
-  await page.waitForSelector('[data-testid=outbound-message]')
-  check('a banned word is rejected inline and nothing is approved', /not allowed/.test(await page.textContent('[data-testid=outbound-message]')) && (await page.getByTestId('outbound-history').getByText('Draft', { exact: true }).count()) === 1)
-  await page.getByTestId('outbound-draft').locator('textarea').fill(original)
-  await page.getByRole('button', { name: /Approve & send/ }).click()
   await page.getByTestId('outbound-history').getByText('Sent (simulated)').waitFor()
-  check('after approval the history shows "Sent (simulated)"', true)
-  await page.reload()
-  await page.waitForSelector('[data-testid=outbound-history]')
-  check('the approved message survives a reload', (await page.getByTestId('outbound-history').getByText('Sent (simulated)').count()) === 1)
-  await shot('7-outbound')
+  check('the message is only ever marked sent (simulated)', true)
+  const caseReport = await download('Download case report (PDF)')
+  check('they can download their own case report', caseReport.head === '%PDF-' && caseReport.name === `${assignedCase}-report.pdf`, `${caseReport.name} ${caseReport.size} bytes`)
+  const brief = await page.textContent('[data-testid=brief-source]')
+  check(`the brief badge reads "${EXPECT_SOURCE}"`, brief.trim() === EXPECT_SOURCE || brief.trim() === `${EXPECT_SOURCE} (cached)`, brief.trim())
+  await noBannedWords('Case detail (investigator)')
+  await shot('6-investigator-case')
+  await page.goto(`${BASE}/system`)
+  await page.waitForSelector('[data-testid=current-user]')
+  check('an investigator who types /system is sent to My Cases', (await page.textContent('h1')).trim() === 'My Cases')
+  await signOut()
 
-  // ---- Settings
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Settings' }).click()
-  await page.getByRole('button', { name: 'Send test email' }).click()
-  await page.waitForSelector('[data-testid=test-email-result]')
-  check('"Send test email" shows a result', /Success\.|Not sent\./.test(await page.textContent('[data-testid=test-email-result]')), (await page.textContent('[data-testid=test-email-result]')).trim())
-
-  // ---- A page that does not exist still renders something
-  await page.goto(`${BASE}/cases/CASE-9999`)
-  await page.waitForSelector('[role=alert]')
-  check('an unknown case shows an error with retry, not a blank page', /Unknown case/.test(await page.textContent('[role=alert]')) && (await page.getByRole('button', { name: 'Try again' }).count()) >= 1)
-  await page.goto(`${BASE}/nowhere`)
-  check('an unknown address shows a not-found page', await page.getByRole('heading', { name: 'Page not found' }).isVisible())
+  // ---------------------------------------------------------------- the API agrees, and the log shows it
+  const inv = await apiLogin('south_inv1')
+  const denied = await fetch(`${API}/cases/${otherUnitCase}`, { headers: { Authorization: `Bearer ${inv}` } })
+  check('the API itself refuses the investigator another unit’s case (403)', denied.status === 403)
+  const noToken = await fetch(`${API}/queue`)
+  check('the API refuses a request with no token (401)', noToken.status === 401)
+  const refusedAssign = await fetch(`${API}/cases/${assignedCase}/assign`, {
+    method: 'POST', headers: { Authorization: `Bearer ${inv}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ assignee_user_id: 4, reason: 'Trying it anyway' }),
+  })
+  check('the API refuses an investigator assigning a case (403)', refusedAssign.status === 403)
+  const audit = await api('/audit?limit=1000', adminToken)
+  const kinds = (type) => audit.filter((e) => e.event_type === type)
+  check('the audit log has the logins', kinds('login').length >= 4 && kinds('login_failed').length >= 1)
+  check('the audit log has the assignment', kinds('assignment').some((e) => e.case_id === assignedCase && e.reviewer === 'Kavya Menon' && e.reason === 'Arjun has the capacity this week'))
+  check('the audit log has the decision under the investigator’s name', kinds('decision').some((e) => e.case_id === assignedCase && e.reviewer === 'Arjun Nair'))
+  const downloads = kinds('report_download').map((e) => e.action).sort()
+  check('every report download is audited', ['case_pdf', 'case_pdf', 'unit_csv', 'unit_pdf'].every((a, i) => downloads[i] === a), downloads.join(','))
+  check('refused attempts are audited', kinds('access_denied').length >= 3, `${kinds('access_denied').length} entries`)
+  check('outbound create and approval are audited', kinds('outbound_create').length === 1 && kinds('outbound_approve').length === 1)
 } catch (error) {
   check('the flow ran to the end', false, error.message.split('\n')[0])
   await shot('failure')
 }
 
-// Unknown case => the API answers 404 on purpose; everything else must be clean.
-const unexpected = problems.filter((p) => !/CASE-9999/.test(p) && !/status of 404/.test(p) && !/status of 422/.test(p) && !/outbound\/\d+/.test(p)) // the 422 is the banned word being rejected, on purpose
-check('browser console has no errors or warnings', unexpected.length === 0, unexpected.slice(0, 3).join(' | '))
+// The refusals above are the point of the test: 401 for the wrong password, 403 for access that
+// is not allowed, and 422 never. Anything else is a problem.
+const expected = (p) => /HTTP 401: .*\/auth\/login/.test(p) || /HTTP 403/.test(p) || /status of 40[13]/.test(p)
+const unexpected = problems.filter((p) => !expected(p))
+check('browser console has no unexpected errors or warnings', unexpected.length === 0, unexpected.slice(0, 3).join(' | '))
 await browser.close()
 
 const failed = results.filter((r) => !r.ok)

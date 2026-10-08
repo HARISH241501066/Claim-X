@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { errorMessage, getOutbound, postApprove, postOutbound, putOutbound } from '../api'
 import { when } from '../lib/format'
 import { useApi } from '../lib/useApi'
-import { MIN_REASON, validateEntry } from '../lib/review'
-import { useReviewer } from '../lib/reviewer'
+import { MIN_REASON, validateReason } from '../lib/review'
+import { useAuth } from '../lib/authContext'
 import { Badge, Button } from './ui'
 
 const field =
@@ -19,7 +19,7 @@ export const NOTICE =
   'This message will not be sent until you approve it. Do not mention suspicion or investigation.'
 
 function Draft({ draft, onDone, onClose }) {
-  const [reviewer, setReviewer] = useReviewer()
+  const { user } = useAuth()
   const [subject, setSubject] = useState(draft.subject)
   const [body, setBody] = useState(draft.body)
   const [reason, setReason] = useState('')
@@ -44,14 +44,14 @@ function Draft({ draft, onDone, onClose }) {
   const save = () => run(() => putOutbound(draft.id, { subject, body }), 'Draft saved.')
 
   async function approve() {
-    const problem = validateEntry(reviewer, reason)
+    const problem = validateReason(reason)
     if (problem) {
-      setMessage({ type: 'error', text: problem.replace('Enter your name before recording anything.', 'Enter the approver’s name.') })
+      setMessage({ type: 'error', text: problem })
       return
     }
     const saved = await run(() => putOutbound(draft.id, { subject, body }))
     if (!saved) return
-    const ok = await run(() => postApprove(draft.id, { approved_by: reviewer.trim(), reason: reason.trim() }))
+    const ok = await run(() => postApprove(draft.id, { reason: reason.trim() }))
     if (ok) onDone()
   }
 
@@ -71,10 +71,9 @@ function Draft({ draft, onDone, onClose }) {
         Message
         <textarea id={`body-${draft.id}`} rows={7} className={field} value={body} onChange={(e) => setBody(e.target.value)} />
       </label>
-      <label className="mt-2 block text-xs font-medium text-ink-2" htmlFor={`approver-${draft.id}`}>
-        Approver
-        <input id={`approver-${draft.id}`} className={field} value={reviewer} onChange={(e) => setReviewer(e.target.value)} placeholder="e.g. Asha Rao" />
-      </label>
+      <p className="mt-2 text-xs text-ink-2" data-testid="approver">
+        You approve as <span className="font-medium text-ink">{user.display_name}</span>.
+      </p>
       <label className="mt-2 block text-xs font-medium text-ink-2" htmlFor={`approval-reason-${draft.id}`}>
         Reason for approving (required)
         <input
@@ -135,7 +134,6 @@ function Picker({ label, options, onPick, busy }) {
 /** Drafts of messages to providers and members. Nothing is sent until a person approves, and even
  *  then it is only simulated. */
 export default function OutboundPanel({ detail }) {
-  const [reviewer] = useReviewer()
   const history = useApi((signal) => getOutbound(detail.case_id, signal), [detail.case_id])
   const [openId, setOpenId] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -151,7 +149,7 @@ export default function OutboundPanel({ detail }) {
     setError(null)
     try {
       const made = await postOutbound(detail.case_id, {
-        template, recipient_type, recipient_id, created_by: reviewer.trim() || 'reviewer',
+        template, recipient_type, recipient_id,
       })
       setOpenId(made.id)
       history.reload()

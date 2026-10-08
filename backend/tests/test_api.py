@@ -16,6 +16,7 @@ from backend.brief import generate
 from backend.brief.generate import Brief
 from backend.cases import ranking
 from backend.pipeline import PipelineError
+from backend.tests.auth_helpers import login
 
 RING = "CASE-0001"
 GOOD = {"action": "escalate_for_investigation", "reason": "Ring pattern looks consistent",
@@ -41,6 +42,7 @@ def client(shared, tmp_path, monkeypatch):
     monkeypatch.setattr(generate, "load_env", lambda path=None: {})  # never read a real .env
     app = create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db", runner=lambda path: shared)
     with TestClient(app) as test_client:
+        login(test_client)
         yield test_client
 
 
@@ -77,9 +79,9 @@ def test_health_works_before_the_pipeline_is_ready_and_other_endpoints_say_503(t
             "status": "ok", "ready": False, "started_at": None, "finished_at": None,
             "total_seconds": None, "stages": [],
         }  # fmt: skip
+        login(c)
         for path in ("/overview", "/queue", f"/cases/{RING}", f"/cases/{RING}/graph", "/audit"):
-            expected = 200 if path == "/audit" else 503
-            assert c.get(path).status_code == expected, path
+            assert c.get(path).status_code == 503, path
         assert c.post(f"/cases/{RING}/decision", json=GOOD).status_code == 503
 
 
@@ -94,6 +96,7 @@ def test_a_failed_startup_reports_error_and_a_later_rerun_recovers(shared, tmp_p
 
     app = create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db", runner=flaky)
     with TestClient(app) as c:
+        login(c, "admin")
         assert c.get("/health").json()["status"] == "error"
         assert c.get("/queue").status_code == 503
         assert c.post("/admin/rerun").status_code == 200
@@ -347,11 +350,11 @@ def test_a_decision_is_recorded_and_changes_the_status(client):
     response = client.post(f"/cases/{RING}/decision", json=GOOD)
     assert response.status_code == 201
     body = response.json()
-    assert body["action"] == GOOD["action"] and body["reviewer"] == "Asha Rao"
+    assert body["action"] == GOOD["action"] and body["reviewer"] == "Kavya Menon"  # the signed-in user
     assert body["case_status"] == "Escalated for investigation" and body["decided_at"].endswith("Z")
     detail = client.get(f"/cases/{RING}").json()
     assert detail["status"] == "Escalated for investigation"
-    assert [d["reviewer"] for d in detail["decisions"]] == ["Asha Rao"]
+    assert [d["reviewer"] for d in detail["decisions"]] == ["Kavya Menon"]
     assert detail["decisions"][0]["reason"] == GOOD["reason"]
 
 
@@ -362,14 +365,12 @@ def test_a_decision_is_recorded_and_changes_the_status(client):
         {"action": "monitor", "reason": "", "reviewer": "Asha"},
         {"action": "monitor", "reason": "     ", "reviewer": "Asha"},
         {"action": "monitor", "reason": "ok", "reviewer": "Asha"},  # too short
-        {"action": "monitor", "reason": "Looks routine", "reviewer": ""},
-        {"action": "monitor", "reason": "Looks routine"},  # no reviewer
         {"reason": "Looks routine", "reviewer": "Asha"},  # no action
         {"action": "deny_claim", "reason": "Looks routine", "reviewer": "Asha"},
         {"action": "block_payment", "reason": "Looks routine", "reviewer": "Asha"},
     ],
 )
-def test_a_decision_needs_an_action_a_reviewer_and_a_reason(client, body):
+def test_a_decision_needs_an_action_and_a_reason(client, body):
     assert client.post(f"/cases/{RING}/decision", json=body).status_code == 422, body
     assert client.get(f"/cases/{RING}").json()["status"] == "Awaiting human review"
     assert [e for e in client.get("/audit").json() if e["event_type"] == "decision"] == []
@@ -394,11 +395,13 @@ def test_audit_is_latest_first_filterable_and_limited(client, shared):
     other = case_id_for(shared, "PRV-005")
     client.post(f"/cases/{RING}/decision", json=GOOD)
     client.post(f"/cases/{other}/decision", json={**GOOD, "action": "dismiss", "reason": "Benign coding"})
+    login(client, "admin")  # the full log, including entries that belong to no case
     entries = client.get("/audit", params={"limit": 1000}).json()
     ids = [e["audit_id"] for e in entries]
     assert ids == sorted(ids, reverse=True)
     assert [e["event_type"] for e in entries if e["event_type"] == "decision"] == ["decision", "decision"]
-    assert entries[0]["case_id"] == other and entries[0]["reason"] == "Benign coding"
+    newest = next(e for e in entries if e["event_type"] == "decision")
+    assert newest["case_id"] == other and newest["reason"] == "Benign coding"
     assert entries[-1]["event_type"] == "pipeline_run" and entries[-1]["details"]["trigger"] == "startup"
     assert {e["case_id"] for e in client.get("/audit", params={"case_id": RING}).json()} == {RING}
     assert len(client.get("/audit", params={"event_type": "decision"}).json()) == 2
@@ -424,8 +427,10 @@ def test_decisions_survive_a_restart(shared, tmp_path):
         return create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db", runner=lambda p: shared)
 
     with TestClient(make()) as first:
+        login(first)
         first.post(f"/cases/{RING}/decision", json={**GOOD, "action": "dismiss", "reason": "Cleared"})
     with TestClient(make()) as second:
+        login(second, "admin")
         assert second.get(f"/cases/{RING}").json()["status"] == "Dismissed by reviewer"
         assert second.get("/overview").json()["cases_decided"] == 1
 
@@ -438,9 +443,11 @@ def test_rerun_swaps_database_files_and_keeps_the_audit(tmp_path):
     with TestClient(app) as c:
         rt = app.state.runtime
         assert rt.active == 0 and (tmp_path / "claimshield.db").exists()
+        login(c)
         c.post(f"/cases/{RING}/decision", json=GOOD)
         c.get(f"/cases/{RING}/brief")
         first_run = rt.state.finished_at
+        login(c, "admin")
         response = c.post("/admin/rerun")
         assert response.status_code == 200 and response.json()["status"] == "ok"
         assert rt.active == 1 and (tmp_path / "claimshield.alt.db").exists()
@@ -454,6 +461,7 @@ def test_rerun_swaps_database_files_and_keeps_the_audit(tmp_path):
 
 def test_a_rerun_already_in_progress_gives_409(client):
     runtime = client.app.state.runtime
+    login(client, "admin")
     assert runtime.rerun_lock.acquire(blocking=False)
     try:
         assert client.post("/admin/rerun").status_code == 409
@@ -472,6 +480,7 @@ def test_a_failed_rerun_keeps_the_previous_state(shared, tmp_path):
 
     app = create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db", runner=runner)
     with TestClient(app) as c:
+        login(c, "admin")
         response = c.post("/admin/rerun")
         assert response.status_code == 500 and "previous state kept" in response.json()["detail"]
         assert c.get("/queue").status_code == 200 and app.state.runtime.active == 0
@@ -493,6 +502,7 @@ def test_a_failing_stage_is_skipped_and_reported_as_degraded(tmp_path, monkeypat
     assert "stage prediction failed" in caplog.text
     app = create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db", runner=lambda p: state)
     with TestClient(app) as c:
+        login(c, "admin")
         health = c.get("/health").json()
         assert health["status"] == "degraded"
         assert c.get(f"/cases/{RING}").json()["prediction"]["available"] is False

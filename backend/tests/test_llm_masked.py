@@ -19,6 +19,7 @@ from backend.brief import generate, llm_payload, masker, template
 from backend.brief.evidence import build_pack
 from backend.brief.llm_payload import IDENTIFIER, PLACEHOLDER
 from backend.brief.masker import LeakError
+from backend.tests.auth_helpers import login
 
 RING = "CASE-0001"
 CLAUDE = {"LLM_PROVIDER": "anthropic", "LLM_API_KEY": "test-key"}
@@ -458,6 +459,7 @@ def api(shared, tmp_path, monkeypatch):
     monkeypatch.setattr(generate, "load_env", lambda path=None: {})
     app = create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db", runner=lambda path: shared)
     with TestClient(app) as test_client:
+        login(test_client, "admin")
         yield test_client, app
 
 
@@ -798,6 +800,7 @@ def test_stored_briefs_survive_a_restart_and_a_second_prewarm_calls_nothing(groq
     sleeps.clear()
     restarted = create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db", runner=lambda path: shared)
     with TestClient(restarted) as fresh:
+        login(fresh, "admin")
         body = fresh.post("/admin/prewarm-briefs?top=5").json()
         assert body["generated"] == 0 and body["already_cached"] == 5 and body["llm_calls"] == 0
         assert fresh.get(f"/cases/{top_cases(fresh)[0]}/brief").json()["cached"] is True

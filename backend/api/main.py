@@ -1,8 +1,10 @@
 """ClaimShield Nexus API.
 
-The pipeline runs once at startup and its results are served from memory. Reviewers record
-decisions through the API; the system only recommends, and every decision is written to an
-append-only audit log. No endpoint denies a claim or blocks a payment.
+The pipeline runs once at startup and its results are served from memory. Everyone signs in; what
+they can see and do depends on their role (admin, team lead, investigator) and unit, and the rules
+are enforced here, not in the screens. Reviewers record decisions through the API; the system only
+recommends, and every decision is written to an append-only audit log. No endpoint denies a claim
+or blocks a payment.
 """
 
 from __future__ import annotations
@@ -14,14 +16,23 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend import pipeline
-from backend.api import views
-from backend.api.notifications import build_router
+from backend.access.routing import route_cases
+from backend.access.seed import Seeder, ensure_seeded, seed_demo
+from backend.access.store import AccessStore
+from backend.api import access_routes, notifications, scope, views
+from backend.api.deps import (
+    AdminDep,
+    UserDep,
+    case_permission,
+    get_runtime,
+    get_state,
+)  # fmt: skip
 from backend.api.schemas import (
     STATUS_BY_ACTION,
     AuditEntry,
@@ -67,6 +78,7 @@ class Runtime:
         self.error: str | None = None
         self.audit = AuditLog(audit_path)
         self.notify = NotifyStore(audit_path)
+        self.access = AccessStore(audit_path)
         self.decisions: dict[str, dict] = self.audit.latest_decisions()
         self.overrides: dict[str, dict] = self.audit.latest_overrides()
         # (state, case, horizon) -> (brief, expiry); an expiry of None means keep until the next rerun
@@ -101,8 +113,16 @@ class Runtime:
                      "total_seconds": state.total_seconds,
                      "stages": {t.name: t.seconds for t in state.timings}},
         )  # fmt: skip
+        self.route(state)
         self.raise_alerts(state)
         return state
+
+    def route(self, state: PipelineState) -> None:
+        """Place new cases in a unit by their provider's city. Existing assignments stay as they are."""
+        try:
+            route_cases(state.cases, state.db_path, self.access)
+        except Exception:
+            log.exception("could not route the cases to units")
 
     def raise_alerts(self, state: PipelineState) -> None:
         """Tell reviewers what this run found. A problem here is logged and never stops the run."""
@@ -122,18 +142,10 @@ class Runtime:
             log.exception("could not raise notifications for this run")
 
 
-def get_runtime(request: Request) -> Runtime:
-    return request.app.state.runtime
-
-
-def get_state(runtime: Annotated[Runtime, Depends(get_runtime)]) -> PipelineState:
-    if runtime.state is None:
-        raise HTTPException(503, "The pipeline is not ready yet. Check /health.")
-    return runtime.state
-
-
 RuntimeDep = Annotated[Runtime, Depends(get_runtime)]
 StateDep = Annotated[PipelineState, Depends(get_state)]
+ViewDep = Annotated[object, Depends(case_permission("view"))]  # the user may open this case
+DecideDep = Annotated[object, Depends(case_permission("decide"))]  # ... and decide on it
 
 
 def _health(runtime: Runtime) -> HealthOut:
@@ -155,12 +167,14 @@ def create_app(
     audit_path: Path | None = None,
     team_hours: float = DEFAULT_CAPACITY_HOURS,
     runner: Runner | None = None,
+    seed: Seeder | None = None,
 ) -> FastAPI:
     # CLAIMSHIELD_AUDIT_PATH lets a demo or test use its own audit file
     audit_file = Path(audit_path or os.environ.get("CLAIMSHIELD_AUDIT_PATH") or AUDIT_PATH)
     runtime = Runtime(
         Path(data_dir), audit_file, runner or (lambda path: pipeline.run_all(path, team_hours))
     )
+    ensure_seeded(runtime.access, seed or seed_demo)  # demo users, from DEMO_PASSWORD, only into an empty database
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -179,41 +193,8 @@ def create_app(
     app.state.runtime = runtime
     app.add_middleware(
         CORSMiddleware, allow_origins=VITE_ORIGINS, allow_methods=["GET", "POST", "PUT", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=["*"], expose_headers=["Content-Disposition"],
     )  # fmt: skip
-
-    app.include_router(build_router(get_runtime, get_state))
-
-    @app.get("/health", response_model=HealthOut)
-    def health(rt: RuntimeDep) -> HealthOut:
-        """Server status and how long each pipeline stage took."""
-        return _health(rt)
-
-    @app.get("/overview", response_model=OverviewOut)
-    def overview(rt: RuntimeDep, state: StateDep):
-        """Headline numbers: claims, findings, cases, dollars at risk, findings per rule."""
-        return views.build_overview(state, rt.decisions)
-
-    @app.get("/queue", response_model=QueueOut)
-    def queue(
-        rt: RuntimeDep,
-        state: StateDep,
-        capacity: Annotated[float, Query(ge=0, le=1000, description="Team hours")] = (
-            DEFAULT_CAPACITY_HOURS
-        ),
-        weights: Annotated[
-            str | None,
-            Query(description="risk:0.3,dollars:0.25,impact:0.15,severity:0.15,evidence:0.15"),
-        ] = None,
-        include_decided: Annotated[
-            bool, Query(description="Also list cases a reviewer has decided")
-        ] = False,
-    ):
-        """Cases re-ranked with the given weights and scheduled against team capacity."""
-        return views.build_queue(
-            state, rt.decisions, capacity, views.parse_weights(weights), include_decided,
-            rt.overrides,
-        )
 
     def make_brief(
         rt: Runtime,
@@ -251,6 +232,51 @@ def create_app(
                                      "fallback_reason": brief.fallback_reason})  # fmt: skip
             return out
 
+    app.include_router(notifications.build_router())
+    app.include_router(access_routes.build_router(make_brief))
+
+    @app.get("/health", response_model=HealthOut)
+    def health(rt: RuntimeDep) -> HealthOut:
+        """Server status and how long each pipeline stage took. The only open endpoint."""
+        return _health(rt)
+
+    @app.get("/overview", response_model=OverviewOut)
+    def overview(rt: RuntimeDep, state: StateDep, user: UserDep):
+        """Headline numbers for what you may see: everything for an admin, your unit or your cases."""
+        if user.role == "admin":
+            return views.build_overview(state, rt.decisions)
+        label = "unit" if user.role == "team_lead" else "mine"
+        return scope.overview_for(state, rt.decisions, rt.overrides, scope.visible(rt, user, state), label)
+
+    @app.get("/queue", response_model=QueueOut)
+    def queue(
+        rt: RuntimeDep,
+        state: StateDep,
+        user: UserDep,
+        capacity: Annotated[float, Query(ge=0, le=1000, description="Team hours")] = (
+            DEFAULT_CAPACITY_HOURS
+        ),
+        weights: Annotated[
+            str | None,
+            Query(description="risk:0.3,dollars:0.25,impact:0.15,severity:0.15,evidence:0.15"),
+        ] = None,
+        include_decided: Annotated[
+            bool, Query(description="Also list cases a reviewer has decided")
+        ] = False,
+        view: Annotated[
+            Literal["mine", "unit"],
+            Query(description="Investigators: their own cases, or the read-only unit queue"),
+        ] = "mine",
+    ):
+        """Cases re-ranked with the given weights and scheduled against team capacity, over the
+        cases you may see (an investigator can also list the unit's queue, read-only)."""
+        cases = scope.visible(rt, user, state, "unit" if view == "unit" else "all")
+        built = views.build_queue(
+            state if user.role == "admin" else scope.scoped_state(state, cases), rt.decisions,
+            capacity, views.parse_weights(weights), include_decided, rt.overrides,
+        )  # fmt: skip
+        return scope.annotate_queue(rt, built, user)
+
     def find_case(state: PipelineState, case_id: str):
         case = state.case(case_id)
         if case is None:
@@ -258,26 +284,23 @@ def create_app(
         return case
 
     @app.get("/cases/{case_id}", response_model=CaseDetail)
-    def case_detail(case_id: str, rt: RuntimeDep, state: StateDep):
+    def case_detail(case_id: str, rt: RuntimeDep, state: StateDep, user: UserDep, _: ViewDep):
         """One case: findings with reasons and evidence IDs, timeline, prediction, decisions."""
-        case = find_case(state, case_id)
-        events = rt.audit.list(1000, case_id)
-        history = [e for e in events if e["event_type"] == "decision"]
-        changes = [e for e in events if e["event_type"] == "priority_override"]
-        return views.build_case_detail(state, case, rt.decisions, history, rt.overrides, changes)
+        return scope.case_detail(rt, state, find_case(state, case_id), user)
 
     @app.get("/cases/{case_id}/evidence/{key}", response_model=EvidenceRows)
     def case_evidence(
         case_id: str,
         key: str,
         state: StateDep,
+        _: ViewDep,
         limit: Annotated[int, Query(ge=1, le=500, description="Most claim rows to return")] = 200,
     ):
         """The claim rows (and linked records) behind one evidence item such as E1."""
         return views.build_evidence_rows(state, find_case(state, case_id), key, limit)
 
     @app.get("/cases/{case_id}/graph", response_model=GraphOut)
-    def case_graph(case_id: str, state: StateDep):
+    def case_graph(case_id: str, state: StateDep, _: ViewDep):
         """Network around the case, with a suspicious flag on nodes and links."""
         return views.build_case_graph(state, find_case(state, case_id))
 
@@ -286,6 +309,7 @@ def create_app(
         case_id: str,
         rt: RuntimeDep,
         state: StateDep,
+        _: ViewDep,
         horizon: Annotated[int, Query(ge=1, le=365, description="Prediction horizon in days")] = 30,
     ):
         """Investigation brief: written by the LLM only if a key is set and the text validates."""
@@ -293,24 +317,27 @@ def create_app(
         return make_brief(rt, state, case_id, horizon)
 
     @app.post("/cases/{case_id}/decision", response_model=DecisionOut, status_code=201)
-    def decide(case_id: str, body: DecisionIn, rt: RuntimeDep, state: StateDep):
-        """Record a human reviewer's decision. A reason is required. Nothing is denied or blocked."""
+    def decide(case_id: str, body: DecisionIn, rt: RuntimeDep, state: StateDep, user: UserDep, _: DecideDep):
+        """Record a decision as the signed-in user. A reason is required. Nothing is denied or blocked."""
         find_case(state, case_id)
         with rt.decision_lock:
             entry = rt.audit.append(
                 "decision", case_id=case_id, action=body.action, reason=body.reason,
-                reviewer=body.reviewer,
+                reviewer=user.display_name, details={"user_id": user.id, "role": user.role},
             )  # fmt: skip
             rt.decisions[case_id] = entry
+            if rt.access.get_assignment(case_id):
+                rt.access.set_status(case_id, "closed" if body.action == "dismiss" else "in_review")
         return DecisionOut(
             audit_id=entry["audit_id"], case_id=case_id, action=body.action, reason=body.reason,
-            reviewer=body.reviewer, decided_at=entry["ts"], case_status=STATUS_BY_ACTION[body.action],
+            reviewer=user.display_name, decided_at=entry["ts"],
+            case_status=STATUS_BY_ACTION[body.action],
         )  # fmt: skip
 
     @app.post(
         "/cases/{case_id}/priority-override", response_model=PriorityOverrideOut, status_code=201
     )
-    def override_priority(case_id: str, body: OverrideIn, rt: RuntimeDep, state: StateDep):
+    def override_priority(case_id: str, body: OverrideIn, rt: RuntimeDep, state: StateDep, user: UserDep, _: DecideDep):
         """A reviewer changes a case's queue priority (or clears it). A reason is required."""
         find_case(state, case_id)
         standing = views.build_queue(
@@ -323,8 +350,8 @@ def create_app(
             entry = rt.audit.append(
                 "priority_override", case_id=case_id,
                 action="set_priority" if body.priority is not None else "clear_priority",
-                reason=body.reason, reviewer=body.reviewer,
-                details={"priority": body.priority, "ai_priority": ai_priority},
+                reason=body.reason, reviewer=user.display_name,
+                details={"priority": body.priority, "ai_priority": ai_priority, "user_id": user.id},
             )
             if body.priority is not None:
                 rt.overrides[case_id] = entry
@@ -334,23 +361,33 @@ def create_app(
             audit_id=entry["audit_id"], case_id=case_id, ai_priority=ai_priority,
             priority=body.priority if body.priority is not None else ai_priority,
             override_active=body.priority is not None, reason=body.reason,
-            reviewer=body.reviewer, ts=entry["ts"],
+            reviewer=user.display_name, ts=entry["ts"],
         )
 
     @app.get("/audit", response_model=list[AuditEntry])
     def audit(
         rt: RuntimeDep,
+        state: StateDep,
+        user: UserDep,
         limit: Annotated[int, Query(ge=1, le=1000)] = 100,
         case_id: Annotated[str | None, Query()] = None,
         event_type: Annotated[str | None, Query(description="For example decision")] = None,
     ):
-        """Decisions, notifications, outbound messages and pipeline runs, latest first."""
-        return rt.audit.list(limit, case_id, event_type)
+        """The audit log, latest first: everything for an admin, otherwise only entries about the
+        cases you may see."""
+        if user.role == "admin":
+            return rt.audit.list(limit, case_id, event_type)
+        mine = {c.case_id for c in scope.visible(rt, user, state)}
+        if case_id is not None and case_id not in mine:
+            return []
+        entries = rt.audit.list(1000, case_id, event_type)
+        return [e for e in entries if e["case_id"] in mine][:limit]
 
     @app.post("/admin/prewarm-briefs", response_model=PrewarmOut)
     def prewarm_briefs(
         rt: RuntimeDep,
         state: StateDep,
+        _: AdminDep,
         top: Annotated[int, Query(ge=1, le=10, description="How many top-ranked cases")] = 5,
     ):
         """Write and store the briefs of the top cases of the default queue (open cases, default
@@ -387,7 +424,7 @@ def create_app(
             rt.prewarm_lock.release()
 
     @app.post("/admin/rerun", response_model=HealthOut)
-    def rerun(rt: RuntimeDep):
+    def rerun(rt: RuntimeDep, user: AdminDep):
         """Rebuild everything. The current data keeps being served until the new run swaps in."""
         if not rt.rerun_lock.acquire(blocking=False):
             raise HTTPException(409, "A rerun is already in progress")
@@ -396,6 +433,8 @@ def create_app(
                 rt.load(1 - rt.active, "rerun")
             except PipelineError as exc:
                 raise HTTPException(500, f"Rerun failed; previous state kept ({exc})") from exc
+            rt.audit.append("rerun_requested", reviewer=user.display_name,
+                            details={"user_id": user.id})  # fmt: skip
         finally:
             rt.rerun_lock.release()
         return _health(rt)

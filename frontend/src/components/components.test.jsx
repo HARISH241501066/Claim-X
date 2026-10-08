@@ -215,7 +215,6 @@ describe('ReviewPanel', () => {
     render(<ReviewPanel detail={detail} onChanged={onChanged} />)
     return { onChanged, user: userEvent.setup() }
   }
-  const name = () => screen.getByLabelText('Your name')
   const reason = () => screen.getByLabelText('Reason (required)')
 
   it('keeps the AI recommendation visually separate from the reviewer decision', () => {
@@ -233,15 +232,13 @@ describe('ReviewPanel', () => {
     )
   })
 
-  it('blocks every action without a name or a reason, and sends nothing', async () => {
+  it('blocks every action without a reason, and sends nothing', async () => {
     const { user } = setup()
     for (const label of ['Open investigation', 'Request more information', 'Dismiss']) {
       await user.click(screen.getByRole('button', { name: label }))
-      expect(screen.getByTestId('decision-error')).toHaveTextContent('Enter your name')
+      expect(screen.getByTestId('decision-error')).toHaveTextContent('A reason is required')
     }
-    await user.type(name(), 'Asha Rao')
-    await user.click(screen.getByRole('button', { name: 'Dismiss' }))
-    expect(screen.getByTestId('decision-error')).toHaveTextContent('A reason is required')
+    expect(screen.queryByLabelText('Your name')).toBeNull() // the reviewer is whoever is signed in
     await user.type(reason(), 'hmm')
     await user.click(screen.getByRole('button', { name: 'Request more information' }))
     expect(screen.getByTestId('decision-error')).toHaveTextContent('at least 5')
@@ -252,28 +249,20 @@ describe('ReviewPanel', () => {
     ['Open investigation', 'escalate_for_investigation'],
     ['Request more information', 'request_more_information'],
     ['Dismiss', 'dismiss'],
-  ])('"%s" records the %s action with the reason and reviewer', async (label, action) => {
-    api.postDecision.mockResolvedValue({ case_status: 'Escalated for investigation', reviewer: 'Asha Rao' })
+  ])('"%s" records the %s action with the reason', async (label, action) => {
+    api.postDecision.mockResolvedValue({ case_status: 'Escalated for investigation' })
     const { user, onChanged } = setup()
-    await user.type(name(), '  Asha Rao ')
     await user.type(reason(), ' Pattern needs checking ')
     await user.click(screen.getByRole('button', { name: label }))
-    expect(api.postDecision).toHaveBeenCalledWith('CASE-0001', { action, reason: 'Pattern needs checking', reviewer: 'Asha Rao' })
+    expect(api.postDecision).toHaveBeenCalledWith('CASE-0001', { action, reason: 'Pattern needs checking' })
     expect(await screen.findByTestId('decision-confirmation')).toHaveTextContent('Escalated for investigation')
     expect(onChanged).toHaveBeenCalledTimes(1)
     expect(reason()).toHaveValue('') // cleared after saving
   })
 
-  it('remembers the reviewer name in this browser only', async () => {
-    const { user } = setup()
-    await user.type(name(), 'Asha Rao')
-    expect(window.localStorage.getItem('claimshield.reviewer')).toBe('Asha Rao')
-  })
-
   it('shows a server error instead of failing silently', async () => {
     api.postDecision.mockRejectedValue({ response: { status: 422, data: { detail: 'reason: too short' } } })
     const { user, onChanged } = setup()
-    await user.type(name(), 'Asha')
     await user.type(reason(), 'A fine reason')
     await user.click(screen.getByRole('button', { name: 'Dismiss' }))
     expect(await screen.findByTestId('decision-error')).toHaveTextContent('too short')
@@ -282,15 +271,14 @@ describe('ReviewPanel', () => {
   })
 
   it('needs a reason for a priority override too', async () => {
-    api.postOverride.mockResolvedValue({ override_active: true, priority: 0.99, reviewer: 'Asha' })
+    api.postOverride.mockResolvedValue({ override_active: true, priority: 0.99 })
     const { user } = setup()
-    await user.type(name(), 'Asha')
     await user.click(screen.getByRole('button', { name: 'Set priority' }))
     expect(screen.getByTestId('override-error')).toHaveTextContent('A reason is required')
     expect(api.postOverride).not.toHaveBeenCalled()
     await user.type(screen.getByLabelText('Reason for the override (required)'), 'Records arrive this week')
     await user.click(screen.getByRole('button', { name: 'Set priority' }))
-    expect(api.postOverride).toHaveBeenCalledWith('CASE-0001', { priority: 0.77, reason: 'Records arrive this week', reviewer: 'Asha' })
+    expect(api.postOverride).toHaveBeenCalledWith('CASE-0001', { priority: 0.77, reason: 'Records arrive this week' })
     expect(await screen.findByTestId('override-confirmation')).toHaveTextContent('Priority set to 0.990')
   })
 
@@ -299,10 +287,9 @@ describe('ReviewPanel', () => {
     const active = caseDetail({ priority: 0.99, override: { priority: 0.99, reason: 'x', reviewer: 'Ben', ts: '2026-10-08T10:00:00Z' } })
     const { user } = setup(active)
     expect(screen.getByText(/yours: 0.990 \(Ben\)/)).toBeInTheDocument()
-    await user.type(name(), 'Asha')
     await user.type(screen.getByLabelText('Reason for the override (required)'), 'Review finished')
     await user.click(screen.getByRole('button', { name: 'Clear override' }))
-    expect(api.postOverride).toHaveBeenCalledWith('CASE-0001', { priority: null, reason: 'Review finished', reviewer: 'Asha' })
+    expect(api.postOverride).toHaveBeenCalledWith('CASE-0001', { priority: null, reason: 'Review finished' })
   })
 
   it('lists earlier decisions and overrides, newest first', () => {

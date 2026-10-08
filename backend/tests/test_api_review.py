@@ -7,6 +7,7 @@ from backend import pipeline
 from backend.api.main import create_app
 from backend.audit import AuditLog
 from backend.brief import generate
+from backend.tests.auth_helpers import login
 
 RING = "CASE-0001"
 GOOD = {"action": "escalate_for_investigation", "reason": "Ring pattern looks consistent",
@@ -25,6 +26,7 @@ def client(shared, tmp_path, monkeypatch):
     monkeypatch.setattr(generate, "load_env", lambda path=None: {})
     app = create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db", runner=lambda path: shared)
     with TestClient(app) as test_client:
+        login(test_client)
         yield test_client
 
 
@@ -140,7 +142,7 @@ def test_an_override_reorders_the_queue_but_keeps_the_ai_priority(client):
     after = client.get("/queue", params={"capacity": 1000}).json()["scheduled"]
     assert after[0]["case_id"] == last["case_id"] and after[0]["priority"] == 0.99
     assert after[0]["ai_priority"] == last["ai_priority"]
-    assert after[0]["override"]["reviewer"] == "Asha Rao"
+    assert after[0]["override"]["reviewer"] == "Kavya Menon"
     assert after[1]["case_id"] == RING and after[1]["override"] is None
     assert [i["rank"] for i in after] == list(range(1, 21))
     detail = client.get(f"/cases/{last['case_id']}").json()
@@ -180,24 +182,22 @@ def test_clearing_an_override_restores_the_ai_order(client):
         {"priority": 0.5, "reviewer": "Asha"},  # no reason
         {"priority": 0.5, "reason": "ok", "reviewer": "Asha"},  # too short
         {"priority": 0.5, "reason": "     ", "reviewer": "Asha"},
-        {"priority": 0.5, "reason": "Needs a closer look"},  # no reviewer
-        {"priority": 0.5, "reason": "Needs a closer look", "reviewer": ""},
         {"priority": 1.5, "reason": "Needs a closer look", "reviewer": "Asha"},
         {"priority": -0.1, "reason": "Needs a closer look", "reviewer": "Asha"},
         {"reason": "Needs a closer look", "reviewer": "Asha"},  # priority missing (null clears)
     ],
 )
-def test_an_override_needs_a_valid_priority_a_reason_and_a_reviewer(client, body):
+def test_an_override_needs_a_valid_priority_and_a_reason(client, body):
     assert client.post(f"/cases/{RING}/priority-override", json=body).status_code == 422, body
     assert [e for e in client.get("/audit").json() if e["event_type"] == "priority_override"] == []
     assert client.get("/queue").json()["scheduled"][0]["override"] is None
 
 
 def test_an_override_is_audited_with_both_priorities(client):
-    set_priority(client, RING, 0.42, reason="Waiting on provider records", reviewer="Ben Cole")
+    set_priority(client, RING, 0.42, reason="Waiting on provider records")
     entry = client.get("/audit").json()[0]
     assert entry["event_type"] == "priority_override" and entry["action"] == "set_priority"
-    assert entry["reviewer"] == "Ben Cole" and entry["reason"] == "Waiting on provider records"
+    assert entry["reviewer"] == "Kavya Menon" and entry["reason"] == "Waiting on provider records"
     assert entry["details"]["priority"] == 0.42 and 0 < entry["details"]["ai_priority"] <= 1
 
 
@@ -208,8 +208,10 @@ def test_overrides_survive_a_restart(shared, tmp_path):
         )
 
     with TestClient(make()) as first:
+        login(first)
         set_priority(first, RING, 0.1)
     with TestClient(make()) as second:
+        login(second)
         scheduled = second.get("/queue", params={"capacity": 1000}).json()["scheduled"]
         item = next(i for i in scheduled if i["case_id"] == RING)
         assert item["priority"] == 0.1 and item["override"]["priority"] == 0.1
@@ -223,5 +225,6 @@ def test_the_audit_file_location_can_come_from_the_environment(shared, tmp_path,
     target = tmp_path / "elsewhere" / "env_audit.db"
     monkeypatch.setenv("CLAIMSHIELD_AUDIT_PATH", str(target))
     with TestClient(create_app(data_dir=tmp_path, runner=lambda p: shared)) as c:
+        login(c)
         c.post(f"/cases/{RING}/decision", json=GOOD)
     assert target.exists() and AuditLog(target).list()[0]["event_type"] == "decision"

@@ -47,6 +47,7 @@ class OverviewOut(BaseModel):
     cases_backlog: int
     scheduled_hours: float
     team_hours: float
+    scope: str = "all"  # all (admin), unit (team lead) or mine (investigator)
 
 
 class FactorsOut(BaseModel):
@@ -84,6 +85,11 @@ class QueueItem(BaseModel):
     queue: str
     status: str
     summary: str
+    unit_name: str | None = None
+    assignee_id: int | None = None
+    assignee_name: str | None = None
+    assignment_status: str | None = None  # unassigned, assigned, in_review or closed
+    can_open: bool = True  # False for a unit-queue row an investigator may only look at
 
 
 class QueueOut(BaseModel):
@@ -170,6 +176,22 @@ class CaseDetail(BaseModel):
     confidence: dict
     limitations: list[str]
     decisions: list[AuditEntry]
+    access: AccessOut | None = None
+
+
+class AccessOut(BaseModel):
+    """Who the case is with and what the signed-in user may do with it (the UI only reflects this)."""
+
+    unit_id: int | None = None
+    unit_name: str | None = None
+    assignee_id: int | None = None
+    assignee_name: str | None = None
+    assignment_status: str = "unassigned"
+    assigned_at: str | None = None
+    can_decide: bool = False
+    can_assign: bool = False
+    can_outbound: bool = False
+    can_report: bool = False
 
 
 class GraphNode(BaseModel):
@@ -237,7 +259,6 @@ Reviewer = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2,
 class DecisionIn(BaseModel):
     action: ReviewAction
     reason: Reason = Field(description="Why the reviewer decided this; required, 5+ characters")
-    reviewer: Reviewer = Field(description="Name or ID of the human reviewer")
 
 
 class ClaimRow(BaseModel):
@@ -277,7 +298,6 @@ class OverrideIn(BaseModel):
         description="New priority between 0 and 1, or null to clear the override"
     )
     reason: Reason = Field(description="Why the reviewer changed the priority; 5+ characters")
-    reviewer: Reviewer = Field(description="Name or ID of the human reviewer")
 
 
 class PriorityOverrideOut(BaseModel):
@@ -299,3 +319,6 @@ class DecisionOut(BaseModel):
     reviewer: str
     decided_at: str
     case_status: str
+
+
+CaseDetail.model_rebuild()

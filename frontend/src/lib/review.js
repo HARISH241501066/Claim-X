@@ -12,11 +12,9 @@ export const ACTION_LABELS = {
 }
 
 export const MIN_REASON = 5
-export const MIN_REVIEWER = 2
 
-/** Every action needs a named reviewer and a reason; returns the message to show, or null. */
-export function validateEntry(reviewer, reason) {
-  if (reviewer.trim().length < MIN_REVIEWER) return 'Enter your name before recording anything.'
+/** Every action needs a reason (the person is the signed-in user); returns the message to show, or null. */
+export function validateReason(reason) {
   if (reason.trim().length < MIN_REASON) return `A reason is required (at least ${MIN_REASON} characters).`
   return null
 }

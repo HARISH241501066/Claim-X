@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS notifications (
     case_id TEXT, message TEXT NOT NULL, created_at TEXT NOT NULL,
     read INTEGER NOT NULL DEFAULT 0,
     email_status TEXT NOT NULL DEFAULT 'not_required' CHECK (email_status IN {EMAIL_STATUSES}),
-    dedupe_key TEXT);
+    dedupe_key TEXT,
+    recipient_user_id INTEGER);  -- set for a message meant for one person (an assignment)
 CREATE INDEX IF NOT EXISTS notifications_dedupe ON notifications (dedupe_key);
 
 -- What each run has already told reviewers about, so a rerun does not repeat itself.
@@ -54,6 +55,9 @@ class NotifyStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as con:
             con.executescript(DDL)
+            columns = {row[1] for row in con.execute("PRAGMA table_info(notifications)")}
+            if "recipient_user_id" not in columns:  # a file made before per-person messages
+                con.execute("ALTER TABLE notifications ADD COLUMN recipient_user_id INTEGER")
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path, timeout=10)
@@ -88,12 +92,14 @@ class NotifyStore:
     def add_notification(
         self, *, role: str, type: str, severity: str, case_id: str | None, message: str,
         email_status: str = "not_required", dedupe_key: str | None = None,
+        recipient_user_id: int | None = None,
     ) -> dict:  # fmt: skip
         new_id = self._write(
             "INSERT INTO notifications (recipient_role, type, severity, case_id, message, "
-            "created_at, email_status, dedupe_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (role, type, severity, case_id, message, now_iso(), email_status, dedupe_key),
-        )
+            "created_at, email_status, dedupe_key, recipient_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (role, type, severity, case_id, message, now_iso(), email_status, dedupe_key,
+             recipient_user_id),
+        )  # fmt: skip
         return self.get_notification(new_id)
 
     def get_notification(self, notification_id: int) -> dict | None:

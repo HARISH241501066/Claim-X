@@ -2,13 +2,14 @@ import { Link } from 'react-router-dom'
 import { count, hours, rupees } from '../lib/format'
 import DetectorChips from './DetectorChips'
 import { FactorBars, PriorityBar } from './PriorityBar'
+import AssignControl, { AssignmentBadge } from './AssignControl'
 import { Badge } from './ui'
 
 function DividerRow({ children, testId, tone }) {
   return (
     <tr data-testid={testId}>
       <th
-        colSpan={7}
+        colSpan={8}
         scope="colgroup"
         className={`border-y border-line px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide ${tone}`}
       >
@@ -18,15 +19,21 @@ function DividerRow({ children, testId, tone }) {
   )
 }
 
-function CaseRow({ item }) {
+function CaseRow({ item, members, onChanged }) {
   return (
     <tr className="border-b border-line align-middle hover:bg-surface-2/60" data-testid="queue-row" data-case={item.case_id}>
       <td className="px-3 py-3 text-center text-sm font-semibold tabular-nums text-ink">{item.rank}</td>
       <td className="px-3 py-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Link to={`/cases/${item.case_id}`} className="text-sm font-medium text-ink underline-offset-2 hover:text-accent hover:underline">
-            {item.title}
-          </Link>
+          {item.can_open === false ? (
+            <span className="text-sm font-medium text-ink-2" title="Only the assigned investigator can open this case">
+              {item.title}
+            </span>
+          ) : (
+            <Link to={`/cases/${item.case_id}`} className="text-sm font-medium text-ink underline-offset-2 hover:text-accent hover:underline">
+              {item.title}
+            </Link>
+          )}
           <Badge tone={item.case_type === 'ring' ? 'critical' : 'neutral'}>
             {item.case_type === 'ring' ? 'Ring' : 'Provider'}
           </Badge>
@@ -36,6 +43,15 @@ function CaseRow({ item }) {
           {item.investigation_band && ` · 30-day investigation risk ${item.investigation_band}`}
           {item.status !== 'Awaiting human review' && ` · ${item.status}`}
         </p>
+      </td>
+      <td className="px-3 py-3" data-testid="assignee-cell">
+        <AssignmentBadge status={item.assignment_status} />
+        <p className="mt-1 text-xs text-ink-2">{item.assignee_name ?? 'Nobody yet'}</p>
+        {members && (
+          <div className="mt-1">
+            <AssignControl caseId={item.case_id} members={members} assigneeId={item.assignee_id} onDone={onChanged} />
+          </div>
+        )}
       </td>
       <td className="px-3 py-3">
         <PriorityBar priority={item.priority} aiPriority={item.ai_priority} override={item.override} />
@@ -53,7 +69,7 @@ function CaseRow({ item }) {
 }
 
 /** The ranked table with a divider where the team's hours run out. */
-export default function QueueTable({ queue }) {
+export default function QueueTable({ queue, members = null, onChanged }) {
   const { scheduled, backlog, capacity_hours: capacity, scheduled_hours: used } = queue
   return (
     <div className="overflow-x-auto rounded-xl border border-line bg-surface">
@@ -63,6 +79,7 @@ export default function QueueTable({ queue }) {
           <tr className="text-xs text-muted">
             <th scope="col" className="px-3 py-2 text-center font-medium">Rank</th>
             <th scope="col" className="px-3 py-2 font-medium">Case</th>
+            <th scope="col" className="px-3 py-2 font-medium">Assigned to</th>
             <th scope="col" className="px-3 py-2 font-medium">Priority</th>
             <th scope="col" className="px-3 py-2 font-medium" title="Risk, dollars, members, severity, evidence">Factors</th>
             <th scope="col" className="px-3 py-2 font-medium">Detectors</th>
@@ -76,26 +93,26 @@ export default function QueueTable({ queue }) {
           </DividerRow>
           {scheduled.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-3 py-4 text-sm text-muted">
+              <td colSpan={8} className="px-3 py-4 text-sm text-muted">
                 No case fits in this many team hours.
               </td>
             </tr>
           )}
           {scheduled.map((item) => (
-            <CaseRow key={item.case_id} item={item} />
+            <CaseRow key={item.case_id} item={item} members={members} onChanged={onChanged} />
           ))}
           <DividerRow testId="divider-backlog" tone="bg-surface-2 text-ink-2">
             Backlog · {count(backlog.length)} {backlog.length === 1 ? 'case' : 'cases'} waiting for capacity
           </DividerRow>
           {backlog.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-3 py-4 text-sm text-muted">
+              <td colSpan={8} className="px-3 py-4 text-sm text-muted">
                 Nothing is waiting: every case fits in the scheduled hours.
               </td>
             </tr>
           )}
           {backlog.map((item) => (
-            <CaseRow key={item.case_id} item={item} />
+            <CaseRow key={item.case_id} item={item} members={members} onChanged={onChanged} />
           ))}
         </tbody>
       </table>

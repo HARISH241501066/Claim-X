@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getNotifications, postNotificationRead, postReadAll } from '../api'
 import { when } from '../lib/format'
-import { ROLES, useRole } from '../lib/role'
 import { useApi } from '../lib/useApi'
 import { Badge } from './ui'
 
@@ -67,10 +66,9 @@ function Item({ note, onOpen }) {
 
 /** The bell in the top bar: unread count, a list grouped by severity (high first), mark all read. */
 export default function NotificationBell() {
-  const [role, setRole] = useRole()
   const [open, setOpen] = useState(false)
   const box = useRef(null)
-  const state = useApi((signal) => getNotifications({ role }, signal), [role])
+  const state = useApi((signal) => getNotifications({}, signal), [])
   const { reload } = state
 
   useEffect(() => {
@@ -107,7 +105,7 @@ export default function NotificationBell() {
   }
   const readAll = async () => {
     try {
-      await postReadAll(role)
+      await postReadAll()
     } catch {
       /* the list stays as it was */
     }
@@ -117,21 +115,6 @@ export default function NotificationBell() {
   return (
     <div className="relative" ref={box}>
       <div className="flex items-center gap-2">
-        <label className="flex items-center gap-1 text-xs text-muted">
-          <span className="sr-only md:not-sr-only">Viewing as</span>
-          <select
-            aria-label="Viewing as"
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="rounded-md border border-axis bg-page px-1.5 py-1 text-xs text-ink"
-          >
-            {ROLES.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        </label>
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}

@@ -22,6 +22,11 @@ export const queueItem = (over = {}) => ({
   queue: 'scheduled',
   status: 'Awaiting human review',
   summary: 'Referral network summary.',
+  unit_name: 'Unit South',
+  assignee_id: null,
+  assignee_name: null,
+  assignment_status: 'unassigned',
+  can_open: true,
   ...over,
 })
 
@@ -105,6 +110,11 @@ export const finding = (over = {}) => ({
   ...over,
 })
 
+export const accessData = (over = {}) => ({
+  unit_id: 1, unit_name: 'Unit South', assignee_id: 3, assignee_name: 'Arjun Nair', assignment_status: 'assigned',
+  assigned_at: '2026-10-08T09:00:00Z', can_decide: true, can_assign: false, can_outbound: true, can_report: true, ...over,
+})
+
 export const caseDetail = (over = {}) => ({
   case_id: 'CASE-0001',
   title: 'Referral network: RING-01 (5 linked entities)',
@@ -135,6 +145,7 @@ export const caseDetail = (over = {}) => ({
   confidence: { level: 'Medium', reasons: ['2 of 3 detector groups fired', 'prediction band Low'] },
   limitations: ['Synthetic data: all records are simulated.'],
   decisions: [],
+  access: accessData(),
   ...over,
 })
 
@@ -193,3 +204,10 @@ export const evidenceRows = (key = 'E2') => ({
   linked_records: [],
   note: null,
 })
+
+const USERS = {
+  admin: { id: 1, username: 'admin', display_name: 'System Admin', role: 'admin', unit_id: null, unit_name: null, active: true },
+  team_lead: { id: 2, username: 'south_lead', display_name: 'Kavya Menon', role: 'team_lead', unit_id: 1, unit_name: 'Unit South', active: true },
+  investigator: { id: 3, username: 'south_inv1', display_name: 'Arjun Nair', role: 'investigator', unit_id: 1, unit_name: 'Unit South', active: true },
+}
+export const userFor = (role = 'admin', over = {}) => ({ ...USERS[role], ...over })

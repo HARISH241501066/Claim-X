@@ -14,6 +14,7 @@ from backend.cases import ranking
 from backend.notify import alerts, emails, notifier, outbound
 from backend.notify.notifier import NotifyConfig, SnsEmailNotifier
 from backend.notify.store import NotifyStore
+from backend.tests.auth_helpers import login
 
 ARN = "arn:aws:sns:ap-south-1:123456789012:claimshield-test"
 BASE = "https://app.example.test"
@@ -250,6 +251,7 @@ def api(shared, tmp_path, monkeypatch):
     monkeypatch.setenv("APP_BASE_URL", BASE)
     app = create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db", runner=lambda path: shared)
     with TestClient(app) as client:
+        login(client)
         yield client, app, sns
 
 
@@ -274,6 +276,7 @@ def test_an_sns_outage_does_not_stop_the_api_or_the_in_app_alerts(shared, tmp_pa
     monkeypatch.setenv("SNS_TOPIC_ARN", ARN)
     app = create_app(data_dir=tmp_path, audit_path=tmp_path / "a.db", runner=lambda path: shared)
     with TestClient(app) as client:
+        login(client, "admin")
         assert client.get("/health").json()["ready"] is True
         notes = client.get("/notifications").json()["notifications"]
         assert notes and {n["email_status"] for n in notes if n["severity"] == "high"} >= {"failed"}
@@ -284,6 +287,7 @@ def test_with_email_disabled_the_alerts_still_work(shared, tmp_path, monkeypatch
     monkeypatch.setattr(notifier.boto3, "client", lambda *a, **k: pytest.fail("AWS must not be called"))
     app = create_app(data_dir=tmp_path, audit_path=tmp_path / "a.db", runner=lambda path: shared)
     with TestClient(app) as client:
+        login(client, "admin")
         notes = client.get("/notifications").json()["notifications"]
         assert notes and {n["email_status"] for n in notes if n["severity"] == "high"} <= {
             "disabled", "not_required"}  # fmt: skip
@@ -300,11 +304,11 @@ def test_reading_notifications(api):
     assert client.post("/notifications/999999/read").status_code == 404
     assert client.post("/notifications/read-all").json()["marked"] == len(notes) - 1
     assert client.get("/notifications").json()["unread_count"] == 0
-    assert client.get("/notifications", params={"role": "nobody"}).status_code == 422
 
 
 def test_the_test_email_endpoint_reports_success_and_the_error(api, monkeypatch):
     client, _, sns = api
+    login(client, "admin")  # only an admin may send it
     ok = client.post("/admin/test-email").json()
     assert ok["ok"] is True and ok["status"] == "sent"
     sent = sns.calls[-1]
@@ -320,6 +324,7 @@ def test_the_test_email_endpoint_reports_success_and_the_error(api, monkeypatch)
 
 def test_everything_is_written_to_the_audit_log(api):
     client, _app, _ = api
+    login(client, "admin")
     kinds = {e["event_type"] for e in client.get("/audit", params={"limit": 1000}).json()}
     assert {"notification", "email_attempt", "pipeline_run"} <= kinds
 
@@ -402,14 +407,13 @@ def test_approval_needs_a_reason_and_only_marks_the_message_sent_simulated(api, 
     url = f"/outbound/{draft['id']}/approve"
     assert client.post(url, json={"approved_by": "Asha Rao"}).status_code == 422
     assert client.post(url, json={"approved_by": "Asha Rao", "reason": "  "}).status_code == 422
-    assert client.post(url, json={"approved_by": "", "reason": "Wording checked"}).status_code == 422
     assert client.get(f"/cases/{RING}/outbound").json()[0]["status"] == "draft"  # still not approved
     edited = client.put(f"/outbound/{draft['id']}", json={
         "subject": "Records for a routine review", "body": draft["body"] + " Thank you."}).json()
     assert edited["subject"] == "Records for a routine review"
     calls = len(sns.calls)
     done = client.post(url, json=GOOD).json()
-    assert done["status"] == "sent_simulated" and done["approved_by"] == "Asha Rao" and done["sent_at"]
+    assert done["status"] == "sent_simulated" and done["approved_by"] == "Kavya Menon" and done["sent_at"]
     assert len(sns.calls) == calls  # nothing real was sent
     assert client.post(url, json=GOOD).status_code == 409
     assert client.put(f"/outbound/{draft['id']}", json={
@@ -419,7 +423,7 @@ def test_approval_needs_a_reason_and_only_marks_the_message_sent_simulated(api, 
     by_type = {e["event_type"]: e for e in events if e["event_type"].startswith("outbound")}
     assert set(by_type) == {"outbound_create", "outbound_edit", "outbound_approve"}
     approve = by_type["outbound_approve"]
-    assert approve["reviewer"] == "Asha Rao" and approve["reason"] == "Checked the wording"
+    assert approve["reviewer"] == "Kavya Menon" and approve["reason"] == "Checked the wording"
     assert all("body" not in e["details"] for e in by_type.values())  # no message text in the log
 
 

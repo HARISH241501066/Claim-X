@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { errorMessage, postDecision, postOverride } from '../api'
 import { priority as fmtPriority, when } from '../lib/format'
-import { ACTIONS, ACTION_LABELS, validateEntry } from '../lib/review'
-import { useReviewer } from '../lib/reviewer'
+import { ACTIONS, ACTION_LABELS, validateReason } from '../lib/review'
 import DetectorChips from './DetectorChips'
 import { Badge, Button, ConfidenceBadge } from './ui'
 
@@ -26,7 +25,7 @@ function HistoryList({ entries }) {
   )
 }
 
-function AiRecommendation({ detail }) {
+export function AiRecommendation({ detail }) {
   const action = detail.recommended_action
   return (
     <section
@@ -55,7 +54,6 @@ function AiRecommendation({ detail }) {
 }
 
 export default function ReviewPanel({ detail, onChanged }) {
-  const [reviewer, setReviewer] = useReviewer()
   const [reason, setReason] = useState('')
   const [overrideReason, setOverrideReason] = useState('')
   const [draftLevel, setLevel] = useState(null) // null: follow the case's current priority
@@ -68,7 +66,7 @@ export default function ReviewPanel({ detail, onChanged }) {
 
   async function submit(kind, send, text, clear) {
     const setMessage = kind === 'decision' ? setDecisionMessage : setOverrideMessage
-    const problem = validateEntry(reviewer, text)
+    const problem = validateReason(text)
     if (problem) {
       setMessage({ type: 'error', text: problem })
       return
@@ -98,14 +96,14 @@ export default function ReviewPanel({ detail, onChanged }) {
   const decide = (action) =>
     submit(
       'decision',
-      () => postDecision(detail.case_id, { action, reason: reason.trim(), reviewer: reviewer.trim() }),
+      () => postDecision(detail.case_id, { action, reason: reason.trim() }),
       reason,
       setReason,
     )
   const override = (priority) =>
     submit(
       'override',
-      () => postOverride(detail.case_id, { priority, reason: overrideReason.trim(), reviewer: reviewer.trim() }),
+      () => postOverride(detail.case_id, { priority, reason: overrideReason.trim() }),
       overrideReason,
       (text) => {
         setOverrideReason(text)
@@ -128,19 +126,7 @@ export default function ReviewPanel({ detail, onChanged }) {
           </h2>
           <Badge tone="muted">logged</Badge>
         </div>
-        <p className="mt-1 text-xs text-muted">Recorded with your name and reason in the audit log.</p>
-
-        <label htmlFor="reviewer-name" className="mt-3 block text-xs font-medium text-ink-2">
-          Your name
-          <input
-            id="reviewer-name"
-            value={reviewer}
-            onChange={(e) => setReviewer(e.target.value)}
-            autoComplete="name"
-            placeholder="e.g. Asha Rao"
-            className={field}
-          />
-        </label>
+        <p className="mt-1 text-xs text-muted">Recorded under your sign-in and your reason in the audit log.</p>
 
         <label htmlFor="decision-reason" className="mt-3 block text-xs font-medium text-ink-2">
           Reason (required)

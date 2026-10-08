@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { API_URL, errorMessage } from '../api'
 import { count, dateRange, hours, riskPercent, rupees } from './format'
-import { ACTIONS, validateEntry } from './review'
+import { ACTIONS, validateReason } from './review'
 import { HORIZONS, isTrained, tooltipText } from './risk'
 import { DEFAULT_WEIGHTS, WEIGHT_KEYS, normalizeWeights, percentShares, weightsParam } from './weights'
 
@@ -87,12 +87,10 @@ describe('formatting', () => {
 
 describe('review rules', () => {
   it('needs a name and a reason of at least five characters', () => {
-    expect(validateEntry('', 'A good reason')).toMatch(/name/)
-    expect(validateEntry('A', 'A good reason')).toMatch(/name/)
-    expect(validateEntry('Asha', '')).toMatch(/reason is required/)
-    expect(validateEntry('Asha', '    ')).toMatch(/reason is required/)
-    expect(validateEntry('Asha', 'abcd')).toMatch(/at least 5/)
-    expect(validateEntry('Asha', 'abcde')).toBeNull()
+    expect(validateReason('')).toMatch(/reason is required/)
+    expect(validateReason('    ')).toMatch(/reason is required/)
+    expect(validateReason('abcd')).toMatch(/at least 5/)
+    expect(validateReason('abcde')).toBeNull()
   })
 
   it('offers only the three review actions, none of which denies or blocks anything', () => {
