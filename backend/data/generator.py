@@ -241,7 +241,10 @@ def build_entities(w: World, rng: random.Random) -> None:
     prov_ids = [RING_ID] + [f"PRV-{i:03d}" for i in range(1, 40)]
     specialties = ["General Medicine", *SPEC_SEQUENCE]
     for pid, spec in zip(prov_ids, specialties, strict=True):
-        city = FIXED_CITY.get(pid) or rng.choices(city_names, weights)[0]
+        if spec == "Pathology":  # pathology providers sit in a city that has a lab
+            city = FIXED_CITY.get(pid) or rng.choice(sorted({f["city"] for f in labs}))
+        else:
+            city = FIXED_CITY.get(pid) or rng.choices(city_names, weights)[0]
         if spec == "Pathology":
             origin = ref.CITIES[city]
             lab = min(labs, key=lambda f: haversine_km(origin, ref.CITIES[f["city"]]))

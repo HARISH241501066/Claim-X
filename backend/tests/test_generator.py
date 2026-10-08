@@ -274,3 +274,12 @@ def test_normal_referrals_stay_in_the_members_city(built):
            AND f.city <> m.city""",
     )
     assert far == 0
+
+
+def test_only_phantom_claims_are_served_outside_the_members_city(built):
+    far = scalar(
+        built,
+        """SELECT COUNT(*) FROM claims c JOIN members m ON m.member_id = c.member_id
+           JOIN facilities f ON f.facility_id = c.facility_id WHERE f.city <> m.city""",
+    )
+    assert far == 10  # the planted phantom claims
