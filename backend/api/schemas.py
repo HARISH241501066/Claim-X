@@ -57,12 +57,22 @@ class FactorsOut(BaseModel):
     evidence: float
 
 
+class OverrideOut(BaseModel):
+    priority: float
+    reason: str
+    reviewer: str
+    ts: str
+
+
 class QueueItem(BaseModel):
     rank: int
     case_id: str
+    title: str
     case_type: str
     primary_entity: str
-    priority: float
+    priority: float  # the priority used for ranking: the reviewer's override if one is set
+    ai_priority: float
+    override: OverrideOut | None = None
     factors: FactorsOut
     flagged_amount: int
     n_members: int
@@ -86,6 +96,7 @@ class QueueOut(BaseModel):
 
 
 class FindingOut(BaseModel):
+    key: str | None = None  # E1, E2, ... as cited in the brief
     finding_id: str
     detector: str
     entity_id: str
@@ -130,13 +141,23 @@ class AuditEntry(BaseModel):
     details: dict = {}
 
 
+class RecommendedAction(BaseModel):
+    tier: str
+    text: str
+
+
 class CaseDetail(BaseModel):
     case_id: str
+    title: str
     case_type: str
     primary_entity: str
     entity_ids: list[str]
     rank: int
     priority: float
+    ai_priority: float
+    override: OverrideOut | None = None
+    recommended_action: RecommendedAction | None = None
+    overrides: list[AuditEntry] = []
     queue: str
     status: str
     flagged_amount: int
@@ -193,6 +214,57 @@ class DecisionIn(BaseModel):
     action: ReviewAction
     reason: Reason = Field(description="Why the reviewer decided this; required, 5+ characters")
     reviewer: Reviewer = Field(description="Name or ID of the human reviewer")
+
+
+class ClaimRow(BaseModel):
+    claim_id: str
+    service_date: str
+    member_id: str
+    provider_id: str
+    facility_id: str
+    referring_provider_id: str | None = None
+    procedure_code: str
+    code_level: int | None = None
+    billed_amount: int
+    claim_type: str
+
+
+class LinkedRecord(BaseModel):
+    id: str
+    kind: str  # inpatient stay | prior investigation
+    description: str
+
+
+class EvidenceRows(BaseModel):
+    case_id: str
+    key: str
+    finding_id: str
+    detector: str
+    scope: str  # claim-specific | provider-level
+    total_claims: int
+    shown: int
+    claims: list[ClaimRow]
+    linked_records: list[LinkedRecord]
+    note: str | None = None
+
+
+class OverrideIn(BaseModel):
+    priority: Annotated[float, Field(ge=0, le=1)] | None = Field(
+        description="New priority between 0 and 1, or null to clear the override"
+    )
+    reason: Reason = Field(description="Why the reviewer changed the priority; 5+ characters")
+    reviewer: Reviewer = Field(description="Name or ID of the human reviewer")
+
+
+class PriorityOverrideOut(BaseModel):
+    audit_id: int
+    case_id: str
+    ai_priority: float
+    priority: float
+    override_active: bool
+    reason: str
+    reviewer: str
+    ts: str
 
 
 class DecisionOut(BaseModel):

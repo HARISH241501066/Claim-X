@@ -8,6 +8,7 @@ append-only audit log. No endpoint denies a claim or blocks a payment.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -26,9 +27,12 @@ from backend.api.schemas import (
     CaseDetail,
     DecisionIn,
     DecisionOut,
+    EvidenceRows,
     GraphOut,
     HealthOut,
+    OverrideIn,
     OverviewOut,
+    PriorityOverrideOut,
     QueueOut,
     StageOut,
 )
@@ -54,6 +58,7 @@ class Runtime:
         self.error: str | None = None
         self.audit = AuditLog(audit_path)
         self.decisions: dict[str, dict] = self.audit.latest_decisions()
+        self.overrides: dict[str, dict] = self.audit.latest_overrides()
         self.briefs: dict[tuple[str, str, int], BriefOut] = {}
         self.runner = runner
         self.rerun_lock = threading.Lock()
@@ -109,12 +114,14 @@ def create_app(
     *,
     run_on_startup: bool = True,
     data_dir: Path = BACKEND_DIR,
-    audit_path: Path = AUDIT_PATH,
+    audit_path: Path | None = None,
     team_hours: float = DEFAULT_CAPACITY_HOURS,
     runner: Runner | None = None,
 ) -> FastAPI:
+    # CLAIMSHIELD_AUDIT_PATH lets a demo or test use its own audit file
+    audit_file = Path(audit_path or os.environ.get("CLAIMSHIELD_AUDIT_PATH") or AUDIT_PATH)
     runtime = Runtime(
-        Path(data_dir), Path(audit_path), runner or (lambda path: pipeline.run_all(path, team_hours))
+        Path(data_dir), audit_file, runner or (lambda path: pipeline.run_all(path, team_hours))
     )
 
     @asynccontextmanager
@@ -164,7 +171,8 @@ def create_app(
     ):
         """Cases re-ranked with the given weights and scheduled against team capacity."""
         return views.build_queue(
-            state, rt.decisions, capacity, views.parse_weights(weights), include_decided
+            state, rt.decisions, capacity, views.parse_weights(weights), include_decided,
+            rt.overrides,
         )
 
     def find_case(state: PipelineState, case_id: str):
@@ -177,8 +185,20 @@ def create_app(
     def case_detail(case_id: str, rt: RuntimeDep, state: StateDep):
         """One case: findings with reasons and evidence IDs, timeline, prediction, decisions."""
         case = find_case(state, case_id)
-        history = [e for e in rt.audit.list(1000, case_id) if e["event_type"] == "decision"]
-        return views.build_case_detail(state, case, rt.decisions, history)
+        events = rt.audit.list(1000, case_id)
+        history = [e for e in events if e["event_type"] == "decision"]
+        changes = [e for e in events if e["event_type"] == "priority_override"]
+        return views.build_case_detail(state, case, rt.decisions, history, rt.overrides, changes)
+
+    @app.get("/cases/{case_id}/evidence/{key}", response_model=EvidenceRows)
+    def case_evidence(
+        case_id: str,
+        key: str,
+        state: StateDep,
+        limit: Annotated[int, Query(ge=1, le=500, description="Most claim rows to return")] = 200,
+    ):
+        """The claim rows (and linked records) behind one evidence item such as E1."""
+        return views.build_evidence_rows(state, find_case(state, case_id), key, limit)
 
     @app.get("/cases/{case_id}/graph", response_model=GraphOut)
     def case_graph(case_id: str, state: StateDep):
@@ -222,6 +242,36 @@ def create_app(
             audit_id=entry["audit_id"], case_id=case_id, action=body.action, reason=body.reason,
             reviewer=body.reviewer, decided_at=entry["ts"], case_status=STATUS_BY_ACTION[body.action],
         )  # fmt: skip
+
+    @app.post(
+        "/cases/{case_id}/priority-override", response_model=PriorityOverrideOut, status_code=201
+    )
+    def override_priority(case_id: str, body: OverrideIn, rt: RuntimeDep, state: StateDep):
+        """A reviewer changes a case's queue priority (or clears it). A reason is required."""
+        find_case(state, case_id)
+        standing = views.build_queue(
+            state, rt.decisions, state.team_hours, views.ranking.Weights(), True, {}
+        )
+        ai_priority = next(
+            i.ai_priority for i in standing.scheduled + standing.backlog if i.case_id == case_id
+        )
+        with rt.decision_lock:
+            entry = rt.audit.append(
+                "priority_override", case_id=case_id,
+                action="set_priority" if body.priority is not None else "clear_priority",
+                reason=body.reason, reviewer=body.reviewer,
+                details={"priority": body.priority, "ai_priority": ai_priority},
+            )
+            if body.priority is not None:
+                rt.overrides[case_id] = entry
+            else:
+                rt.overrides.pop(case_id, None)
+        return PriorityOverrideOut(
+            audit_id=entry["audit_id"], case_id=case_id, ai_priority=ai_priority,
+            priority=body.priority if body.priority is not None else ai_priority,
+            override_active=body.priority is not None, reason=body.reason,
+            reviewer=body.reviewer, ts=entry["ts"],
+        )
 
     @app.get("/audit", response_model=list[AuditEntry])
     def audit(

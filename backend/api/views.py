@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from collections import Counter
 from dataclasses import asdict
 
+import pandas as pd
 from fastapi import HTTPException
 
 from backend.api.schemas import (
@@ -14,24 +16,59 @@ from backend.api.schemas import (
     STATUS_BY_ACTION,
     AuditEntry,
     CaseDetail,
+    ClaimRow,
+    EvidenceRows,
     FactorsOut,
     FindingOut,
     GraphLink,
     GraphNode,
     GraphOut,
+    LinkedRecord,
+    OverrideOut,
     OverviewOut,
     PredictionOut,
     QueueItem,
     QueueOut,
+    RecommendedAction,
     TimelineOut,
 )
 from backend.cases import ranking
-from backend.cases.builder import Case
+from backend.cases.builder import SEVERITY_ORDER, Case
 from backend.detect import graph as graph_module
 from backend.pipeline import PipelineState
 
 WEIGHT_KEYS = ("risk", "dollars", "impact", "severity", "evidence")
 GRAPH_PARTNER_LIMIT = 5  # referral partners shown around a single-provider case
+
+
+TITLE_BY_DETECTOR = {
+    "duplicate": "Duplicate billing",
+    "upcoding": "Upcoding pattern",
+    "unbundling": "Unbundled panel billing",
+    "phantom": "Billing during inpatient stay",
+    "impossible_timing": "Impossible timing",
+    "utilization": "Excess utilization",
+    "repeat_history": "Repeat investigation pattern",
+    "anomaly": "Unusual provider profile",
+    "ring": "Referral network",
+}
+
+
+def case_title(case: Case) -> str:
+    """A short readable name from the case's most serious finding. It never says 'fraud'."""
+    if case.case_type == "ring":  # the case is the network, whichever finding scores highest
+        return f"{TITLE_BY_DETECTOR['ring']}: {case.primary_entity} ({len(case.entity_ids)} linked entities)"
+    top = max(case.findings, key=lambda f: (SEVERITY_ORDER.get(f["severity"], 0), f["score"]))
+    return f"{TITLE_BY_DETECTOR.get(top['detector'], 'Flagged pattern')}: {case.primary_entity}"
+
+
+def override_out(entry: dict | None) -> OverrideOut | None:
+    if entry is None:
+        return None
+    return OverrideOut(
+        priority=entry["details"]["priority"], reason=entry["reason"],
+        reviewer=entry["reviewer"], ts=entry["ts"],
+    )
 
 
 def case_status(case_id: str, decisions: dict[str, dict]) -> str:
@@ -68,25 +105,47 @@ def parse_weights(text: str | None) -> ranking.Weights:
         raise HTTPException(422, str(exc)) from exc
 
 
+def apply_overrides(ranked: pd.DataFrame, overrides: dict[str, dict]) -> pd.DataFrame:
+    """Keep the AI priority, and rank by the reviewer's priority where one is set."""
+    ranked = ranked.assign(ai_priority=ranked.priority)
+    known = set(ranked.case_id)
+    mine = {cid: o["details"]["priority"] for cid, o in overrides.items() if cid in known}
+    if not mine:
+        return ranked
+    ranked["priority"] = [
+        mine.get(cid, p) for cid, p in zip(ranked.case_id, ranked.priority, strict=True)
+    ]
+    ranked = ranked.sort_values(
+        ["priority", "case_id"], ascending=[False, True], ignore_index=True
+    )
+    ranked["rank"] = range(1, len(ranked) + 1)
+    return ranked
+
+
 def build_queue(
     state: PipelineState,
     decisions: dict[str, dict],
     capacity: float,
     weights: ranking.Weights,
     include_decided: bool,
+    overrides: dict[str, dict] | None = None,
 ) -> QueueOut:
+    overrides = overrides or {}
     open_cases = [c for c in state.cases if include_decided or c.case_id not in decisions]
     excluded = len(state.cases) - len(open_cases)
     items: list[QueueItem] = []
     if open_cases:
-        ranked = ranking.schedule(ranking.rank_cases(open_cases, weights), open_cases, capacity)
+        ordered = apply_overrides(ranking.rank_cases(open_cases, weights), overrides)
+        ranked = ranking.schedule(ordered, open_cases, capacity)
         by_id = {c.case_id: c for c in open_cases}
         for r in ranked.itertuples():
             c = by_id[r.case_id]
             items.append(
                 QueueItem(
-                    rank=int(r.rank), case_id=c.case_id, case_type=c.case_type,
-                    primary_entity=c.primary_entity, priority=float(r.priority),
+                    rank=int(r.rank), case_id=c.case_id, title=case_title(c),
+                    case_type=c.case_type, primary_entity=c.primary_entity,
+                    priority=float(r.priority), ai_priority=float(r.ai_priority),
+                    override=override_out(overrides.get(c.case_id)),
                     factors=FactorsOut(risk=r.risk, dollars=r.dollars, impact=r.impact,
                                        severity=r.severity, evidence=r.evidence),
                     flagged_amount=c.flagged_amount, n_members=len(c.affected_members),
@@ -127,21 +186,44 @@ def build_overview(state: PipelineState, decisions: dict[str, dict]) -> Overview
 
 
 def build_case_detail(
-    state: PipelineState, case: Case, decisions: dict[str, dict], history: list[dict]
+    state: PipelineState,
+    case: Case,
+    decisions: dict[str, dict],
+    history: list[dict],
+    overrides: dict[str, dict] | None = None,
+    override_history: list[dict] | None = None,
 ) -> CaseDetail:
     pack = state.packs.get(case.case_id)
-    row = state.ranked[state.ranked.case_id == case.case_id]
-    default = row.iloc[0] if len(row) else None
+    overrides = overrides or {}
+    standing = build_queue(  # where the case sits under default weights, with reviewer overrides
+        state, decisions, state.team_hours, ranking.Weights(), True, overrides
+    )
+    everything = standing.scheduled + standing.backlog
+    item = next((i for i in everything if i.case_id == case.case_id), None)
     prediction = pack.prediction if pack else {"available": False, "reason": "Insufficient data"}
+    keys = {e.finding_id: e.key for e in pack.evidence} if pack else {}
+
+    def order(finding: dict) -> tuple[bool, int]:
+        key = keys.get(finding["finding_id"])
+        return (key is None, int(key[1:]) if key else 0)
+
+    fields = [name for name in FindingOut.model_fields if name != "key"]
     return CaseDetail(
-        case_id=case.case_id, case_type=case.case_type, primary_entity=case.primary_entity,
-        entity_ids=case.entity_ids, rank=int(default["rank"]) if default is not None else 0,
-        priority=float(default["priority"]) if default is not None else 0.0,
-        queue=str(default["queue"]) if default is not None else "backlog",
+        case_id=case.case_id, title=case_title(case), case_type=case.case_type,
+        primary_entity=case.primary_entity, entity_ids=case.entity_ids,
+        rank=item.rank if item else 0, priority=item.priority if item else 0.0,
+        ai_priority=item.ai_priority if item else 0.0,
+        override=override_out(overrides.get(case.case_id)),
+        recommended_action=RecommendedAction(**pack.recommended_action) if pack else None,
+        overrides=[AuditEntry(**e) for e in (override_history or [])],
+        queue=item.queue if item else "backlog",
         status=case_status(case.case_id, decisions), flagged_amount=case.flagged_amount,
         affected_members=case.affected_members, detectors_fired=case.detectors_fired,
         summary=case.summary,
-        findings=[FindingOut(**{k: f[k] for k in FindingOut.model_fields}) for f in case.findings],
+        findings=[
+            FindingOut(key=keys.get(f["finding_id"]), **{k: f[k] for k in fields})
+            for f in sorted(case.findings, key=order)
+        ],
         timeline=[TimelineOut(**asdict(t)) for t in pack.timeline] if pack else [],
         prediction=PredictionOut(**prediction),
         confidence=pack.confidence if pack else {}, limitations=pack.limitations if pack else [],
@@ -227,7 +309,56 @@ def build_case_graph(state: PipelineState, case: Case) -> GraphOut:
     )
 
 
+# ---------------------------------------------------------------- evidence rows
+
+
+def build_evidence_rows(state: PipelineState, case: Case, key: str, limit: int) -> EvidenceRows:
+    """The claim rows behind one evidence item (E1, E2, ...) plus linked stays and investigations."""
+    pack = state.packs.get(case.case_id)
+    item = next((e for e in pack.evidence if e.key.upper() == key.upper()), None) if pack else None
+    if item is None:
+        raise HTTPException(404, f"Unknown evidence {key} for {case.case_id}")
+    rows: list[ClaimRow] = []
+    linked: list[LinkedRecord] = []
+    con = sqlite3.connect(state.db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        for start in range(0, len(item.claim_ids), 500):
+            chunk = item.claim_ids[start : start + 500]
+            marks = ",".join("?" * len(chunk))
+            cursor = con.execute(f"SELECT * FROM claims WHERE claim_id IN ({marks})", chunk)
+            rows += [ClaimRow(**{k: r[k] for k in ClaimRow.model_fields}) for r in cursor]
+        for other in item.other_ids:
+            if other.startswith("STAY-"):
+                for s in con.execute("SELECT * FROM inpatient_stays WHERE stay_id = ?", (other,)):
+                    text = f"{s['member_id']} at {s['facility_id']}, {s['admit_date']} to {s['discharge_date']}"
+                    linked.append(LinkedRecord(id=other, kind="inpatient stay", description=text))
+            elif other.startswith("CASE-"):
+                for i in con.execute("SELECT * FROM investigations WHERE case_id = ?", (other,)):
+                    text = (
+                        f"{i['entity_id']} opened {i['opened_date']}, closed {i['closed_date']} "
+                        f"as {i['outcome']}"
+                    )
+                    linked.append(LinkedRecord(id=other, kind="prior investigation", description=text))
+    finally:
+        con.close()
+    rows.sort(key=lambda r: (r.service_date, r.claim_id))
+    note = None
+    if item.scope == "provider-level":
+        note = (
+            f"Provider-level signal: these are all {len(rows)} claims of {item.entity_id}, "
+            "not specific suspect claims."
+        )
+    elif len(rows) > limit:
+        note = f"Showing the first {limit} of {len(rows)} claims."
+    return EvidenceRows(
+        case_id=case.case_id, key=item.key, finding_id=item.finding_id, detector=item.detector,
+        scope=item.scope, total_claims=len(rows), shown=min(len(rows), limit),
+        claims=rows[:limit], linked_records=linked, note=note,
+    )
+
+
 __all__ = [
-    "build_case_detail", "build_case_graph", "build_overview", "build_queue", "case_status",
-    "parse_weights",
+    "build_case_detail", "build_case_graph", "build_evidence_rows", "build_overview",
+    "build_queue", "case_status", "case_title", "parse_weights",
 ]  # fmt: skip

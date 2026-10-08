@@ -94,3 +94,21 @@ class AuditLog:
         finally:
             con.close()
         return {r["case_id"]: self._entry(r) for r in rows}  # later rows overwrite earlier ones
+
+    def latest_overrides(self) -> dict[str, dict]:
+        """Active reviewer priority overrides per case; a later 'clear' removes the override."""
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT * FROM audit_log WHERE event_type = 'priority_override' ORDER BY audit_id"
+            ).fetchall()
+        finally:
+            con.close()
+        active: dict[str, dict] = {}
+        for row in rows:
+            entry = self._entry(row)
+            if entry["action"] == "set_priority":
+                active[entry["case_id"]] = entry
+            else:
+                active.pop(entry["case_id"], None)
+        return active
