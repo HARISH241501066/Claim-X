@@ -1,0 +1,53 @@
+name: CI
+
+# No secrets are used: every outside service (LLM, AWS SNS) is mocked in the tests, and a guard in
+# backend/tests/conftest.py makes any real network call fail.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (ruff, pytest, coverage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install requirements
+        run: python -m pip install -r backend/requirements.txt
+      - name: Lint
+        run: python -m ruff check backend
+      - name: Tests with coverage
+        run: python -m pytest --cov=backend --cov-report=term --cov-report=xml
+      - name: Keep the coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+  frontend:
+    name: Frontend (lint, tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
