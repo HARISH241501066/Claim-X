@@ -128,7 +128,7 @@ The risk model is evaluated alone, on the held-out last cut-off (`metrics.json`)
 
 These are low, and reported as they are: there are only 40 providers and 3 positives in the test window, so the numbers check that the pipeline works, not real-world accuracy. That is why a transparent history rule backs the model (a repeat offender is raised to High and the band says so: `band_source: escalated`).
 
-Backend tests: {{TESTS}} passing, coverage {{COVERAGE}} of `backend/`. Frontend: unit tests plus a real-Chrome end-to-end run.
+Backend tests: 498 passing (run with no network access), coverage 97% of `backend/`. Frontend: unit tests plus a real-Chrome end-to-end run.
 
 ## Responsible AI
 
