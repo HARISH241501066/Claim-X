@@ -1,5 +1,6 @@
-# Windows shim for the Makefile targets: .\make.ps1 data|api|web|test
-param([Parameter(Mandatory = $true)][ValidateSet('data', 'api', 'web', 'test', 'web-test', 'e2e')][string]$Target)
+# Windows shim for the Makefile targets: .\make.ps1 data|api|web|test|web-test|e2e|reset|coverage
+param([Parameter(Mandatory = $true)][ValidateSet('data', 'api', 'web', 'test', 'web-test', 'e2e', 'reset', 'coverage')][string]$Target,
+       [string]$Extra = '')
 
 $py = Join-Path $PSScriptRoot 'backend\.venv\Scripts\python.exe'
 Set-Location $PSScriptRoot
@@ -13,6 +14,8 @@ switch ($Target) {
         if ($LASTEXITCODE -eq 0) { npm --prefix frontend test }
     }
     'e2e'  { npm --prefix frontend run e2e }
+    'reset' { & $py -m backend.demo_reset $Extra }
+    'coverage' { & $py -m pytest --cov=backend --cov-report=term-missing }
     'test' {
         & $py -m pytest
         if ($LASTEXITCODE -eq 0) { & $py -m ruff check backend }

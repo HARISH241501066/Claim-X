@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from backend.audit import now_iso
@@ -53,7 +54,7 @@ class NotifyStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as con:
+        with closing(self._connect()) as con, con:
             con.executescript(DDL)
             columns = {row[1] for row in con.execute("PRAGMA table_info(notifications)")}
             if "recipient_user_id" not in columns:  # a file made before per-person messages

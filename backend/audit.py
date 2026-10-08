@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -56,7 +57,7 @@ class AuditLog:
     def __init__(self, path: str | Path = AUDIT_PATH):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as con:
+        with closing(self._connect()) as con, con:  # closed at once: a lingering handle locks the file on Windows
             con.executescript(DDL)
             columns = {row[1] for row in con.execute("PRAGMA table_info(llm_requests)")}
             if "attempt" not in columns:  # an older file: add the column, keep every row

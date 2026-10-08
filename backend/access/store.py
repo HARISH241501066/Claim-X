@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -64,7 +65,7 @@ class AccessStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as con:
+        with closing(self._connect()) as con, con:
             con.executescript(DDL)
 
     def _connect(self) -> sqlite3.Connection:
