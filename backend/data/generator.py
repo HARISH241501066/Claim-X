@@ -37,7 +37,7 @@ TARGETS = {
     "claims": 5000,
     "inpatient_stays": 60,
     "referrals": 600,
-    "investigations": 25,
+    "investigations": 30,
 }
 
 N_VISIT_POOL = 3600  # normal visit claims before injection; surplus is trimmed to hit the target
@@ -622,24 +622,68 @@ def inject_honest_cases(w: World, rng: random.Random) -> None:
 # ---------------------------------------------------------------- investigations / finalize
 
 
+NEVER_INVESTIGATED = {RING_ID, OFFENDER, HONEST}  # hidden ring, the future repeat case, honest
+PLANTED_INVESTIGATIONS = (  # planted scenarios that were noticed and confirmed during 2026
+    (UPCODER, date(2026, 3, 10)),
+    (UNBUNDLERS[0], date(2026, 3, 22)),
+    (PHYSIO_PROV, date(2026, 4, 8)),
+    (PHANTOM_PROV, date(2026, 4, 20)),
+    (UNBUNDLERS[1], date(2026, 5, 6)),
+)
+REPEAT_HAZARD = 0.45  # monthly chance of a new investigation after a confirmed one
+BASE_HAZARD = 0.02  # monthly chance for everyone else
+REPEAT_CONFIRM_RATE, BASE_CONFIRM_RATE = 0.85, 0.5
+
+
 def build_investigations(w: World, rng: random.Random) -> None:
+    """Simulated investigation history, linked to history rather than random.
+
+    2025 history gives a pool of providers with a confirmed case. In 2026 the planted cases are
+    noticed on a fixed schedule, and each month (March-June) a provider with a confirmed case
+    closed earlier is re-investigated with high probability, anyone else with a small one.
+    The ring referrer, the repeat offender and the honest specialist are never investigated in
+    2026, so the model has to score them without having seen an outcome.
+    """
     rows: list[tuple[str, str, date, date, str]] = [
         (OFFENDER, "provider", date(2025, 6, 2), date(2025, 9, 15), "confirmed"),
         (HONEST, "provider", date(2025, 10, 6), date(2025, 11, 21), "cleared"),
     ]
-    excluded = {RING_ID, UPCODER, PHANTOM_PROV, OFFENDER, HONEST, PHYSIO_PROV, *UNBUNDLERS}
-    provider_pool = [p["provider_id"] for p in w.providers if p["provider_id"] not in excluded]
+    planted = {p for p, _ in PLANTED_INVESTIGATIONS}
+    providers = sorted(p["provider_id"] for p in w.providers)
+    history_pool = [p for p in providers if p not in NEVER_INVESTIGATED | planted]
     facility_pool = [
         f["facility_id"] for f in w.facilities if f["facility_id"] not in (RING_LAB, RING_CLINIC)
     ]
-    entities = [(e, "provider") for e in rng.sample(provider_pool, 20)]
-    entities += [(e, "facility") for e in rng.sample(facility_pool, 3)]
-    outcomes = ["confirmed"] * 9 + ["cleared"] * 14
-    rng.shuffle(outcomes)
-    lo, hi = date(2025, 7, 1), date(2026, 4, 30)
-    for (entity, etype), outcome in zip(entities, outcomes, strict=True):
-        opened = rand_date(rng, lo, hi)
+    history = [(e, "provider") for e in rng.sample(history_pool, 8)]
+    history += [(e, "facility") for e in rng.sample(facility_pool, 2)]
+    outcomes = ["confirmed"] * 5 + ["cleared"] * 3 + ["confirmed", "cleared"]
+    for (entity, etype), outcome in zip(history, outcomes, strict=True):
+        opened = rand_date(rng, date(2025, 7, 1), date(2025, 12, 15))
         rows.append((entity, etype, opened, opened + timedelta(days=rng.randint(14, 75)), outcome))
+    for provider, opened in PLANTED_INVESTIGATIONS:
+        rows.append(
+            (provider, "provider", opened, opened + timedelta(days=rng.randint(14, 45)), "confirmed")
+        )
+    for month in (3, 4, 5, 6):
+        start = date(2026, month, 1)
+        end = date(2026, month, calendar.monthrange(2026, month)[1])
+        for provider in providers:
+            if provider in NEVER_INVESTIGATED or any(
+                r[0] == provider and start <= r[2] <= end for r in rows
+            ):
+                continue
+            prior = sum(
+                r[0] == provider and r[1] == "provider" and r[4] == "confirmed" and r[3] < start
+                for r in rows
+            )
+            if rng.random() >= (REPEAT_HAZARD if prior else BASE_HAZARD):
+                continue
+            opened = start + timedelta(days=rng.randint(0, 27))
+            confirm = REPEAT_CONFIRM_RATE if prior else BASE_CONFIRM_RATE
+            outcome = "confirmed" if rng.random() < confirm else "cleared"
+            rows.append(
+                (provider, "provider", opened, opened + timedelta(days=rng.randint(14, 45)), outcome)
+            )
     rows.sort(key=lambda r: (r[2], r[0]))
     for i, (entity, etype, opened, closed, outcome) in enumerate(rows, 1):
         w.investigations.append(
@@ -780,7 +824,7 @@ def generate(
     inject_overutilizer(w, rng)
     inject_repeat_offender(w, rng)
     inject_honest_cases(w, rng)
-    build_investigations(w, rng)
+    build_investigations(w, random.Random(seed + 1))  # own stream: history is simulated
     finalize(w, rng)
     write_db(w, Path(db_path))
     write_truth(w, Path(truth_path))

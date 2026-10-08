@@ -297,3 +297,42 @@ def test_provider_ownership_for_self_referral_analysis(built):
             pid,
         )
         assert owned[pid] == home_owner
+
+
+def test_investigations_give_every_prediction_window_labels(built):
+    for cutoff, end in (("2026-02-28", "2026-03-30"), ("2026-03-31", "2026-04-30"),
+                        ("2026-04-30", "2026-05-30"), ("2026-05-31", "2026-06-30")):  # fmt: skip
+        n = scalar(
+            built,
+            """SELECT COUNT(*) FROM investigations WHERE outcome = 'confirmed'
+               AND entity_type = 'provider' AND opened_date > ? AND opened_date <= ?""",
+            cutoff, end,
+        )
+        assert n >= 2, (cutoff, n)  # every window, including the last, has positives
+
+
+def test_hidden_cases_are_never_investigated_in_2026(built):
+    opened = q(
+        built,
+        """SELECT entity_id FROM investigations WHERE opened_date >= '2026-01-01'
+           AND entity_id IN ('PRV-A01', 'PRV-010', 'PRV-015')""",
+    )
+    assert opened == []  # the ring, the repeat offender and the honest specialist
+    planted = {e for (e,) in q(
+        built,
+        """SELECT entity_id FROM investigations WHERE opened_date >= '2026-03-01'
+           AND outcome = 'confirmed'""",
+    )}  # fmt: skip
+    assert {"PRV-005", "PRV-024", "PRV-019", "PRV-007", "PRV-025"} <= planted
+
+
+def test_reinvestigations_follow_confirmed_history(built):
+    rows = q(
+        built,
+        """SELECT i.entity_id, i.opened_date,
+           (SELECT COUNT(*) FROM investigations p WHERE p.entity_id = i.entity_id
+              AND p.outcome = 'confirmed' AND p.closed_date < i.opened_date) AS prior
+           FROM investigations i WHERE i.opened_date >= '2026-03-01' AND i.entity_type = 'provider'
+           AND i.entity_id NOT IN ('PRV-005','PRV-024','PRV-019','PRV-007','PRV-025')""",
+    )
+    assert rows and sum(prior > 0 for *_, prior in rows) / len(rows) >= 0.5
