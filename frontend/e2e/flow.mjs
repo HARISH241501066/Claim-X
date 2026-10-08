@@ -147,7 +147,7 @@ try {
 
   // ---- Human review
   check('"AI Recommendation" and "Your Decision" are separate panels', (await page.getByRole('heading', { name: 'AI Recommendation' }).isVisible()) && (await page.getByRole('heading', { name: 'Your Decision' }).isVisible()))
-  for (const label of ['Open investigation', 'Request records', 'Dismiss']) {
+  for (const label of ['Open investigation', 'Request more information', 'Dismiss']) {
     check(`button "${label}" is present`, await page.getByRole('button', { name: label }).isVisible())
   }
   const postsBefore = posts.length
@@ -157,7 +157,7 @@ try {
   await page.getByRole('button', { name: 'Dismiss' }).click()
   check('a name but no reason: still blocked', /reason is required/i.test(await page.getByTestId('decision-error').textContent()))
   await page.getByLabel('Reason (required)').fill('hmm')
-  await page.getByRole('button', { name: 'Request records' }).click()
+  await page.getByRole('button', { name: 'Request more information' }).click()
   check('a too-short reason is blocked', /at least 5/.test(await page.getByTestId('decision-error').textContent()))
   check('blocked attempts sent nothing to the server', posts.length === postsBefore)
   await page.getByLabel('Reason (required)').fill('Referral pattern and shared ownership need verification')
@@ -206,6 +206,52 @@ try {
   await page.waitForSelector('[data-testid=tile-cases]')
   check('overview counts the decided case', /1 decided/.test(await page.textContent('[data-testid=tile-cases]')))
 
+  // ---- Notifications
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Queue' }).click()
+  await page.waitForSelector('[data-testid=unread-count]')
+  check('the bell shows an unread count after the pipeline run', Number(await page.textContent('[data-testid=unread-count]')) > 0)
+  await page.getByTestId('bell').click()
+  await page.waitForSelector('[data-testid=notification-panel]')
+  const groups = await page.locator('[data-testid=notification-panel] h3').allInnerTexts()
+  check('high-priority notifications are grouped first', /^High priority/i.test(groups[0] ?? ''), groups.join(' | '))
+  const severities = await page.locator('[data-testid=notification]').evaluateAll((els) => els.map((e) => e.dataset.severity))
+  check('items are ordered high, then warning, then info', JSON.stringify(severities) === JSON.stringify([...severities].sort((a, b) => ['high', 'warning', 'info'].indexOf(a) - ['high', 'warning', 'info'].indexOf(b))), severities.slice(0, 8).join(','))
+  check('a high-priority item links to its case', (await page.locator('[data-testid=notification][data-severity=high] a').first().getAttribute('href')).startsWith('/cases/CASE-'))
+  await shot('6-bell')
+  await page.getByRole('button', { name: 'Mark all read' }).click()
+  await page.waitForFunction(() => !document.querySelector('[data-testid=unread-count]'))
+  check('"Mark all read" clears the count', true)
+  await page.keyboard.press('Escape')
+
+  // ---- Drafted messages (never really sent)
+  await page.goto(`${BASE}/cases/CASE-0001`)
+  await page.waitForSelector('[data-testid=outbound-panel]')
+  await page.getByRole('button', { name: 'Request records', exact: true }).click()
+  await page.waitForSelector('[data-testid=outbound-draft]')
+  check('a draft opens with the "will not be sent" notice', /will not be sent until you approve it/.test(await page.getByRole('note').textContent()))
+  const original = await page.getByTestId('outbound-draft').locator('textarea').inputValue()
+  check('the draft uses the records-request wording', /routine documentation review/.test(original) && /within 15 days/.test(original))
+  await page.getByTestId('outbound-draft').locator('textarea').fill(`${original} This claim was flagged.`)
+  await page.getByLabel('Approver').fill('Asha Rao')
+  await page.getByLabel(/Reason for approving/).fill('Wording checked')
+  await page.getByRole('button', { name: /Approve & send/ }).click()
+  await page.waitForSelector('[data-testid=outbound-message]')
+  check('a banned word is rejected inline and nothing is approved', /not allowed/.test(await page.textContent('[data-testid=outbound-message]')) && (await page.getByTestId('outbound-history').getByText('Draft', { exact: true }).count()) === 1)
+  await page.getByTestId('outbound-draft').locator('textarea').fill(original)
+  await page.getByRole('button', { name: /Approve & send/ }).click()
+  await page.getByTestId('outbound-history').getByText('Sent (simulated)').waitFor()
+  check('after approval the history shows "Sent (simulated)"', true)
+  await page.reload()
+  await page.waitForSelector('[data-testid=outbound-history]')
+  check('the approved message survives a reload', (await page.getByTestId('outbound-history').getByText('Sent (simulated)').count()) === 1)
+  await shot('7-outbound')
+
+  // ---- Settings
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Send test email' }).click()
+  await page.waitForSelector('[data-testid=test-email-result]')
+  check('"Send test email" shows a result', /Success\.|Not sent\./.test(await page.textContent('[data-testid=test-email-result]')), (await page.textContent('[data-testid=test-email-result]')).trim())
+
   // ---- A page that does not exist still renders something
   await page.goto(`${BASE}/cases/CASE-9999`)
   await page.waitForSelector('[role=alert]')
@@ -218,7 +264,7 @@ try {
 }
 
 // Unknown case => the API answers 404 on purpose; everything else must be clean.
-const unexpected = problems.filter((p) => !/CASE-9999/.test(p) && !/status of 404/.test(p))
+const unexpected = problems.filter((p) => !/CASE-9999/.test(p) && !/status of 404/.test(p) && !/status of 422/.test(p) && !/outbound\/\d+/.test(p)) // the 422 is the banned word being rejected, on purpose
 check('browser console has no errors or warnings', unexpected.length === 0, unexpected.slice(0, 3).join(' | '))
 await browser.close()
 

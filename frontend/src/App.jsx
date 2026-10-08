@@ -1,5 +1,6 @@
 import { Link, Route, Routes } from 'react-router-dom'
 import Shell from './components/Shell'
+import Admin from './pages/Admin'
 import CaseDetail from './pages/CaseDetail'
 import Overview from './pages/Overview'
 import Queue from './pages/Queue'
@@ -23,6 +24,7 @@ export default function App() {
         <Route index element={<Overview />} />
         <Route path="queue" element={<Queue />} />
         <Route path="cases/:caseId" element={<CaseDetail />} />
+        <Route path="settings" element={<Admin />} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>

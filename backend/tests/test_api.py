@@ -394,13 +394,14 @@ def test_audit_is_latest_first_filterable_and_limited(client, shared):
     other = case_id_for(shared, "PRV-005")
     client.post(f"/cases/{RING}/decision", json=GOOD)
     client.post(f"/cases/{other}/decision", json={**GOOD, "action": "dismiss", "reason": "Benign coding"})
-    entries = client.get("/audit").json()
+    entries = client.get("/audit", params={"limit": 1000}).json()
     ids = [e["audit_id"] for e in entries]
     assert ids == sorted(ids, reverse=True)
-    assert [e["event_type"] for e in entries][:2] == ["decision", "decision"]
+    assert [e["event_type"] for e in entries if e["event_type"] == "decision"] == ["decision", "decision"]
     assert entries[0]["case_id"] == other and entries[0]["reason"] == "Benign coding"
     assert entries[-1]["event_type"] == "pipeline_run" and entries[-1]["details"]["trigger"] == "startup"
-    assert [e["case_id"] for e in client.get("/audit", params={"case_id": RING}).json()] == [RING]
+    assert {e["case_id"] for e in client.get("/audit", params={"case_id": RING}).json()} == {RING}
+    assert len(client.get("/audit", params={"event_type": "decision"}).json()) == 2
     assert len(client.get("/audit", params={"limit": 1}).json()) == 1
     assert client.get("/audit", params={"limit": 0}).status_code == 422
 

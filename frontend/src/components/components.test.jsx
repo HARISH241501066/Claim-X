@@ -228,14 +228,14 @@ describe('ReviewPanel', () => {
     expect(within(ai).getByText(/Assign an investigator for a full review/)).toBeInTheDocument()
     expect(within(ai).getByText(/never denies a claim or blocks a payment/)).toBeInTheDocument()
     expect(within(ai).queryByRole('button')).toBeNull() // the AI panel has no actions
-    ;['Open investigation', 'Request records', 'Dismiss'].forEach((label) =>
+    ;['Open investigation', 'Request more information', 'Dismiss'].forEach((label) =>
       expect(within(mine).getByRole('button', { name: label })).toBeInTheDocument(),
     )
   })
 
   it('blocks every action without a name or a reason, and sends nothing', async () => {
     const { user } = setup()
-    for (const label of ['Open investigation', 'Request records', 'Dismiss']) {
+    for (const label of ['Open investigation', 'Request more information', 'Dismiss']) {
       await user.click(screen.getByRole('button', { name: label }))
       expect(screen.getByTestId('decision-error')).toHaveTextContent('Enter your name')
     }
@@ -243,14 +243,14 @@ describe('ReviewPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Dismiss' }))
     expect(screen.getByTestId('decision-error')).toHaveTextContent('A reason is required')
     await user.type(reason(), 'hmm')
-    await user.click(screen.getByRole('button', { name: 'Request records' }))
+    await user.click(screen.getByRole('button', { name: 'Request more information' }))
     expect(screen.getByTestId('decision-error')).toHaveTextContent('at least 5')
     expect(api.postDecision).not.toHaveBeenCalled()
   })
 
   it.each([
     ['Open investigation', 'escalate_for_investigation'],
-    ['Request records', 'request_more_information'],
+    ['Request more information', 'request_more_information'],
     ['Dismiss', 'dismiss'],
   ])('"%s" records the %s action with the reason and reviewer', async (label, action) => {
     api.postDecision.mockResolvedValue({ case_status: 'Escalated for investigation', reviewer: 'Asha Rao' })

@@ -34,3 +34,14 @@ export function errorMessage(err) {
   if (err?.code === 'ECONNABORTED') return 'The server took too long to answer.'
   return `Cannot reach the API at ${API_URL}. Is it running?`
 }
+
+const put = (url, body) => http.put(url, body).then((r) => r.data)
+
+export const getNotifications = (params, signal) => get('/notifications', params, signal)
+export const postNotificationRead = (id) => post(`/notifications/${id}/read`)
+export const postReadAll = (role) => http.post('/notifications/read-all', null, { params: { role } }).then((r) => r.data)
+export const postTestEmail = () => post('/admin/test-email')
+export const getOutbound = (id, signal) => get(`/cases/${id}/outbound`, undefined, signal)
+export const postOutbound = (id, body) => post(`/cases/${id}/outbound`, body)
+export const putOutbound = (id, body) => put(`/outbound/${id}`, body)
+export const postApprove = (id, body) => post(`/outbound/${id}/approve`, body)

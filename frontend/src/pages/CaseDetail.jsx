@@ -5,6 +5,7 @@ import Async from '../components/Async'
 import Brief from '../components/Brief'
 import DetectorChips from '../components/DetectorChips'
 import EvidenceList from '../components/EvidenceList'
+import OutboundPanel from '../components/OutboundPanel'
 import ReviewPanel from '../components/ReviewPanel'
 import RiskPanel from '../components/RiskPanel'
 import Timeline from '../components/Timeline'
@@ -102,6 +103,7 @@ export default function CaseDetail() {
                 <aside className="min-w-0 space-y-6 lg:sticky lg:top-6 lg:self-start">
                   <RiskPanel prediction={d.prediction} horizon={horizon} onHorizon={setHorizon} />
                   <ReviewPanel key={d.case_id} detail={d} onChanged={() => setVersion((v) => v + 1)} />
+                  <OutboundPanel key={`out-${d.case_id}`} detail={d} />
                 </aside>
               </div>
             </>

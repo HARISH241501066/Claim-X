@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend import pipeline
 from backend.api import views
+from backend.api.notifications import build_router
 from backend.api.schemas import (
     STATUS_BY_ACTION,
     AuditEntry,
@@ -41,6 +42,9 @@ from backend.api.schemas import (
 )
 from backend.audit import AUDIT_PATH, AuditLog
 from backend.brief.generate import INTERACTIVE_WAIT_CAP, PREWARM_WAIT_CAP, PROVIDERS, generate_brief
+from backend.notify import alerts
+from backend.notify.notifier import email_channel, load_config
+from backend.notify.store import NotifyStore
 from backend.pipeline import PipelineError, PipelineState
 
 log = logging.getLogger("claimshield.api")
@@ -62,6 +66,7 @@ class Runtime:
         self.state: PipelineState | None = None
         self.error: str | None = None
         self.audit = AuditLog(audit_path)
+        self.notify = NotifyStore(audit_path)
         self.decisions: dict[str, dict] = self.audit.latest_decisions()
         self.overrides: dict[str, dict] = self.audit.latest_overrides()
         # (state, case, horizon) -> (brief, expiry); an expiry of None means keep until the next rerun
@@ -96,7 +101,25 @@ class Runtime:
                      "total_seconds": state.total_seconds,
                      "stages": {t.name: t.seconds for t in state.timings}},
         )  # fmt: skip
+        self.raise_alerts(state)
         return state
+
+    def raise_alerts(self, state: PipelineState) -> None:
+        """Tell reviewers what this run found. A problem here is logged and never stops the run."""
+        try:
+            queue = views.build_queue(
+                state, self.decisions, DEFAULT_CAPACITY_HOURS, views.parse_weights(None), False,
+                self.overrides,
+            )
+            config = load_config()
+            alerts.run_alerts(
+                cases=state.cases,
+                ranks={i.case_id: i.rank for i in queue.scheduled + queue.backlog},
+                backlog_count=len(queue.backlog), decided=set(self.decisions),
+                store=self.notify, audit=self.audit, email=email_channel(config), config=config,
+            )
+        except Exception:
+            log.exception("could not raise notifications for this run")
 
 
 def get_runtime(request: Request) -> Runtime:
@@ -155,9 +178,11 @@ def create_app(
     )
     app.state.runtime = runtime
     app.add_middleware(
-        CORSMiddleware, allow_origins=VITE_ORIGINS, allow_methods=["GET", "POST", "OPTIONS"],
+        CORSMiddleware, allow_origins=VITE_ORIGINS, allow_methods=["GET", "POST", "PUT", "OPTIONS"],
         allow_headers=["*"],
     )  # fmt: skip
+
+    app.include_router(build_router(get_runtime, get_state))
 
     @app.get("/health", response_model=HealthOut)
     def health(rt: RuntimeDep) -> HealthOut:
@@ -317,9 +342,10 @@ def create_app(
         rt: RuntimeDep,
         limit: Annotated[int, Query(ge=1, le=1000)] = 100,
         case_id: Annotated[str | None, Query()] = None,
+        event_type: Annotated[str | None, Query(description="For example decision")] = None,
     ):
-        """Decisions and pipeline runs, latest first."""
-        return rt.audit.list(limit, case_id)
+        """Decisions, notifications, outbound messages and pipeline runs, latest first."""
+        return rt.audit.list(limit, case_id, event_type)
 
     @app.post("/admin/prewarm-briefs", response_model=PrewarmOut)
     def prewarm_briefs(

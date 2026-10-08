@@ -170,7 +170,7 @@ def test_clearing_an_override_restores_the_ai_order(client):
     assert cleared.json()["priority"] == cleared.json()["ai_priority"]
     top = client.get("/queue").json()["scheduled"][0]
     assert top["case_id"] == RING and top["override"] is None
-    actions = [e["action"] for e in client.get("/audit", params={"case_id": RING}).json()]
+    actions = [e["action"] for e in client.get("/audit", params={"case_id": RING, "event_type": "priority_override"}).json()]
     assert actions == ["clear_priority", "set_priority"]
 
 

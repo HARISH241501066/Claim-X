@@ -19,6 +19,14 @@ vi.mock('../api', async (importOriginal) => ({
   getEvidence: vi.fn(),
   postDecision: vi.fn(),
   postOverride: vi.fn(),
+  getNotifications: vi.fn(),
+  postNotificationRead: vi.fn(),
+  postReadAll: vi.fn(),
+  postTestEmail: vi.fn(),
+  getOutbound: vi.fn(),
+  postOutbound: vi.fn(),
+  putOutbound: vi.fn(),
+  postApprove: vi.fn(),
 }))
 vi.mock('../components/NetworkGraph', () => ({
   default: ({ graph }) => <div data-testid="graph-stub">{graph.nodes.length} nodes</div>,
@@ -49,6 +57,8 @@ beforeEach(() => {
   api.getGraph.mockResolvedValue(graphData())
   api.getBrief.mockResolvedValue(briefData())
   api.getEvidence.mockResolvedValue(evidenceRows())
+  api.getNotifications.mockResolvedValue({ notifications: [], unread_count: 0 })
+  api.getOutbound.mockResolvedValue([])
 })
 
 describe('shell', () => {

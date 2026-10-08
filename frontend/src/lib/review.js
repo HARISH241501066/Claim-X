@@ -1,6 +1,6 @@
 export const ACTIONS = [
   { action: 'escalate_for_investigation', label: 'Open investigation', variant: 'primary' },
-  { action: 'request_more_information', label: 'Request records', variant: 'default' },
+  { action: 'request_more_information', label: 'Request more information', variant: 'default' },
   { action: 'dismiss', label: 'Dismiss', variant: 'default' },
 ]
 

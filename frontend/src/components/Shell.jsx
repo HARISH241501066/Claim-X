@@ -1,9 +1,11 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import ErrorBoundary from './ErrorBoundary'
+import NotificationBell from './NotificationBell'
 
 const LINKS = [
   { to: '/', label: 'Overview', end: true },
   { to: '/queue', label: 'Queue', end: false },
+  { to: '/settings', label: 'Settings', end: false },
 ]
 
 export default function Shell() {
@@ -34,7 +36,10 @@ export default function Shell() {
           The system recommends. A person decides every case.
         </p>
       </aside>
-      <main className="min-w-0 flex-1 px-4 py-6 md:px-8">
+      <main className="min-w-0 flex-1 px-4 py-4 md:px-8">
+        <div className="mb-4 flex justify-end border-b border-line pb-3" data-testid="top-bar">
+          <NotificationBell />
+        </div>
         <ErrorBoundary>
           <Outlet />
         </ErrorBoundary>

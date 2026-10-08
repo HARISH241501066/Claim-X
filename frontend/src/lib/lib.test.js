@@ -96,7 +96,7 @@ describe('review rules', () => {
   })
 
   it('offers only the three review actions, none of which denies or blocks anything', () => {
-    expect(ACTIONS.map((a) => a.label)).toEqual(['Open investigation', 'Request records', 'Dismiss'])
+    expect(ACTIONS.map((a) => a.label)).toEqual(['Open investigation', 'Request more information', 'Dismiss'])
     expect(ACTIONS.map((a) => a.action).join(' ')).not.toMatch(/deny|block|reject|pay/)
   })
 })

@@ -99,11 +99,18 @@ class AuditLog:
             con.close()
         return self._entry(row)
 
-    def list(self, limit: int = 100, case_id: str | None = None) -> list[dict]:
+    def list(
+        self, limit: int = 100, case_id: str | None = None, event_type: str | None = None
+    ) -> list[dict]:
         """Entries, latest first."""
-        sql, params = "SELECT * FROM audit_log", ()
+        clauses, params = [], ()
         if case_id is not None:
-            sql, params = sql + " WHERE case_id = ?", (case_id,)
+            clauses.append("case_id = ?")
+            params += (case_id,)
+        if event_type is not None:
+            clauses.append("event_type = ?")
+            params += (event_type,)
+        sql = "SELECT * FROM audit_log" + (" WHERE " + " AND ".join(clauses) if clauses else "")
         con = self._connect()
         try:
             rows = con.execute(f"{sql} ORDER BY audit_id DESC LIMIT ?", (*params, limit)).fetchall()
