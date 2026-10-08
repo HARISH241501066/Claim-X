@@ -1,39 +1,30 @@
-import { useEffect, useState } from 'react'
-import { Route, Routes } from 'react-router-dom'
-import axios from 'axios'
+import { Link, Route, Routes } from 'react-router-dom'
+import Shell from './components/Shell'
+import CaseDetail from './pages/CaseDetail'
+import Overview from './pages/Overview'
+import Queue from './pages/Queue'
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
-
-function Home() {
-  const [status, setStatus] = useState('checking')
-
-  useEffect(() => {
-    axios
-      .get(`${API_URL}/health`)
-      .then((res) => setStatus(res.data.status === 'ok' ? 'ok' : 'unavailable'))
-      .catch(() => setStatus('unavailable'))
-  }, [])
-
+function NotFound() {
   return (
-    <main className="mx-auto max-w-2xl p-8">
-      <h1 className="text-3xl font-bold text-slate-900">ClaimShield Nexus</h1>
-      <p className="mt-2 text-slate-600">
-        Synthetic-data FWA review workbench. The system recommends; humans decide.
-      </p>
-      <p className="mt-6 text-sm" data-testid="api-status">
-        API:{' '}
-        {status === 'checking' && 'checking...'}
-        {status === 'ok' && 'ok'}
-        {status === 'unavailable' && 'Insufficient data (API unreachable)'}
-      </p>
-    </main>
+    <div className="mx-auto max-w-xl rounded-xl border border-line bg-surface p-6">
+      <h1 className="text-lg font-semibold text-ink">Page not found</h1>
+      <p className="mt-2 text-sm text-ink-2">That address does not match any screen.</p>
+      <Link to="/" className="mt-3 inline-block text-sm text-accent hover:underline">
+        Go to the overview
+      </Link>
+    </div>
   )
 }
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Home />} />
+      <Route element={<Shell />}>
+        <Route index element={<Overview />} />
+        <Route path="queue" element={<Queue />} />
+        <Route path="cases/:caseId" element={<CaseDetail />} />
+        <Route path="*" element={<NotFound />} />
+      </Route>
     </Routes>
   )
 }

@@ -9,3 +9,4 @@ dist/
 backend/ground_truth.csv
 backend/metrics.json
 backend/*.metrics.json
+frontend/e2e/screenshots/

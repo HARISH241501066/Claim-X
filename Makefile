@@ -3,7 +3,7 @@ ifeq ($(wildcard $(PY)),)
 PY := backend/.venv/bin/python
 endif
 
-.PHONY: data api web test
+.PHONY: data api web test web-test e2e
 
 data:
 	$(PY) -m backend.data.generator
@@ -17,3 +17,11 @@ web:
 test:
 	$(PY) -m pytest
 	$(PY) -m ruff check backend
+
+web-test:
+	npm --prefix frontend run lint
+	npm --prefix frontend test
+
+# needs the API (make api) and the web app (make web) running
+e2e:
+	npm --prefix frontend run e2e

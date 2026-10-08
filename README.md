@@ -17,3 +17,7 @@ cp .env.example .env
 | Web (http://localhost:5173) | `make web` | `.\make.ps1 web` |
 | Tests + lint | `make test` | `.\make.ps1 test` |
 | Data | `make data` | `.\make.ps1 data` |
+
+## Using the workbench
+Start the API (`make api`, about 5 seconds to build the data and analysis) and the web app (`make web`), then open http://localhost:5173.
+Overview shows the headline numbers, Queue ranks cases against your team's hours, and each case opens with its evidence, network, timeline, risk estimate and brief. Every decision or priority change needs your name and a reason and is written to the audit log (`backend/audit.db`; set `CLAIMSHIELD_AUDIT_PATH` to use another file). Set `LLM_API_KEY` to let Claude write briefs; without it, or if its text fails validation, the built-in template is used.
