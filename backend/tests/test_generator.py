@@ -283,3 +283,17 @@ def test_only_phantom_claims_are_served_outside_the_members_city(built):
            JOIN facilities f ON f.facility_id = c.facility_id WHERE f.city <> m.city""",
     )
     assert far == 10  # the planted phantom claims
+
+
+def test_provider_ownership_for_self_referral_analysis(built):
+    owned = dict(q(built, "SELECT provider_id, owner_id FROM providers WHERE owner_id IS NOT NULL"))
+    assert set(owned) == {"PRV-A01", "PRV-003", "PRV-012", "PRV-030"}
+    assert owned["PRV-A01"] == "OWN-001"
+    for pid in ("PRV-003", "PRV-012", "PRV-030"):  # owner-operators own their home facility
+        home_owner = scalar(
+            built,
+            """SELECT f.owner_id FROM providers p JOIN facilities f
+               ON f.facility_id = p.facility_id WHERE p.provider_id = ?""",
+            pid,
+        )
+        assert owned[pid] == home_owner

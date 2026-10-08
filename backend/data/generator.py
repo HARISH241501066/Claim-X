@@ -45,6 +45,7 @@ N_NORMAL_REFERRALS = 420
 RING_ID, RING_LAB, RING_CLINIC = "PRV-A01", "FAC-B01", "FAC-C01"
 UPCODER, PHANTOM_PROV, OFFENDER, HONEST = "PRV-005", "PRV-007", "PRV-010", "PRV-015"
 PHYSIO_PROV, UNBUNDLERS = "PRV-019", ("PRV-024", "PRV-025")
+OWNER_OPERATORS = ("PRV-003", "PRV-012", "PRV-030")  # own their home facility; honest
 SPECIAL_PROVIDERS = {RING_ID, UPCODER, OFFENDER, HONEST}
 NORMAL_LEVEL_WEIGHTS = [0.15, 0.30, 0.35, 0.15, 0.05]
 
@@ -259,9 +260,15 @@ def build_entities(w: World, rng: random.Random) -> None:
                 "city": city,
                 "facility_id": facility_id,
                 "joined_date": joined.isoformat(),
+                "owner_id": None,
             }
         )
     w.prov = {p["provider_id"]: p for p in w.providers}
+    # ownership interests (used for self-referral analysis): the ring referrer owns the ring
+    # lab's owner entity; three ordinary owner-operators own their own home facility's owner
+    w.prov[RING_ID]["owner_id"] = "OWN-001"
+    for pid in OWNER_OPERATORS:
+        w.prov[pid]["owner_id"] = w.fac[w.prov[pid]["facility_id"]]["owner_id"]
     w.normal_providers = [p for p in w.providers if p["provider_id"] not in SPECIAL_PROVIDERS]
 
     cities = [c for c, n in MEMBERS_PER_CITY.items() for _ in range(n)]
@@ -674,7 +681,8 @@ CREATE TABLE facilities (
     lat REAL NOT NULL, lon REAL NOT NULL, owner_id TEXT NOT NULL REFERENCES owners(owner_id));
 CREATE TABLE providers (
     provider_id TEXT PRIMARY KEY, specialty TEXT NOT NULL, city TEXT NOT NULL,
-    facility_id TEXT REFERENCES facilities(facility_id), joined_date TEXT NOT NULL);
+    facility_id TEXT REFERENCES facilities(facility_id), joined_date TEXT NOT NULL,
+    owner_id TEXT REFERENCES owners(owner_id));
 CREATE TABLE members (
     member_id TEXT PRIMARY KEY, age INTEGER NOT NULL, gender TEXT NOT NULL, city TEXT NOT NULL);
 CREATE TABLE procedure_codes (
