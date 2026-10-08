@@ -159,6 +159,9 @@ export const briefData = (over = {}) => ({
   source: 'template',
   fallback_reason: 'no LLM_API_KEY is set',
   model: null,
+  provider: null,
+  provider_label: 'Template',
+  masked: false,
   cached: false,
   brief: [
     '# Investigation brief: CASE-0001',

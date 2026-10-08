@@ -1,8 +1,11 @@
-"""Brief generation: the LLM writes only when LLM_API_KEY is set, and only validated text is used.
+"""Brief generation: an outside LLM may help, but only ever sees masked data.
 
-Any problem (no key, bad key, network error, refusal, truncation, or text that fails the
-validator) returns the deterministic template brief instead. The key is only handed to the SDK
-client; it is never logged or returned.
+LLM_PROVIDER picks who writes the brief: none (the default), anthropic, xai or groq. With none, a
+missing key, or any problem (a leak check that fails, a timeout, an error, or text that fails
+validation) the deterministic template brief is returned instead. The pack is reshaped to the
+fields the masker allows, identifiers become placeholders, and a leak check runs before every
+request. The reply is validated while still masked and only then restored for display. The key
+is only handed to the provider's client; it is never logged or returned.
 """
 
 from __future__ import annotations
@@ -10,37 +13,77 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import anthropic
+import openai
 
 from backend.brief.evidence import DB_PATH, DEFAULT_HORIZON, Pack, build_pack
+from backend.brief.llm_payload import prepare, unknown_placeholders
+from backend.brief.masker import LeakError, Vault, audit_record, unmask_text
 from backend.brief.template import FINAL_LINE, SECTIONS, render_template
 from backend.brief.validator import validate_brief
 
 log = logging.getLogger("claimshield.brief")
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MODEL = "claude-opus-5-5"
 MAX_TOKENS = 8000
-REQUEST_TIMEOUT_SECONDS = 60.0
+REQUEST_TIMEOUT_SECONDS = 15.0
+MASKED_NOTE = "Generated from masked data. No personal details were shared."
+
+
+@dataclass(frozen=True)
+class Provider:
+    key: str
+    label: str  # what the screen calls it
+    default_model: str
+    base_url: str | None = None  # set for providers reached through the openai package
+
+
+PROVIDERS = {
+    "anthropic": Provider("anthropic", "Claude", "claude-opus-5-5"),
+    "xai": Provider("xai", "Grok", "grok-4", "https://api.x.ai/v1"),
+    "groq": Provider("groq", "Groq", "openai/gpt-oss-120b", "https://api.groq.com/openai/v1"),
+}
 
 SYSTEM_PROMPT = f"""You write investigation briefs for a healthcare payer's special \
 investigations unit. All data is synthetic.
 
 Rules:
 - Use only the evidence pack you are given. Do not add facts, names, numbers or evidence.
-- Cite every factual statement with its evidence key in square brackets, such as [E1]. \
-Use only keys that appear in the pack, one key per bracket.
+- Cite every factual statement with its evidence key in plain ASCII square brackets, \
+such as [E1], never 【E1】 or (E1). Use only keys that appear in the pack, one key per bracket.
 - Describe behaviour as suspicious or as warranting review. Never state or imply guilt, \
 and never call anyone a fraudster or say anyone committed fraud.
+- People and organisations appear as placeholders such as PERSON_1 and ORG_2. Use them \
+exactly as given and never guess who they are.
 - Do not change the confidence level or the limitations: copy them exactly as given.
 - Write exactly these sections as markdown headings (##), in this order: \
-{', '.join(SECTIONS)}.
+{', '.join(SECTIONS)}. Use short paragraphs and bullet lists; do not use tables.
 - End the brief with this exact line and nothing after it: {FINAL_LINE}"""
+
+
+FULLWIDTH_CITATION = re.compile(r"[【［]\s*(E\d+)\s*[】］]")
+
+
+TYPOGRAPHIC_HYPHENS = str.maketrans({"\u2010": "-", "\u2011": "-"})  # hyphen, non-breaking hyphen
+
+
+def normalize_reply(text: str) -> str:
+    """Undo two typographic habits of some models before validating: fullwidth citation
+    brackets and non-breaking hyphens (which break an exact heading such as human-review).
+    Only look-alike characters change; no check is relaxed."""
+    return normalize_citations(text.translate(TYPOGRAPHIC_HYPHENS))
+
+
+def normalize_citations(text: str) -> str:
+    """Turn 【E1】 (fullwidth brackets, which some models like) into [E1]. Only the bracket style
+    changes: the key inside is still checked against the pack, so a made-up 【E99】 is rejected."""
+    return FULLWIDTH_CITATION.sub(r"[\1]", text)
 
 
 class LLMUnusableError(Exception):
@@ -54,6 +97,16 @@ class Brief:
     source: str  # "llm" or "template"
     fallback_reason: str | None = None
     model: str | None = None
+    provider: str | None = None  # anthropic | xai | groq, only when an LLM wrote it
+    masked: bool = False  # True when an LLM wrote it from masked data
+    retryable: bool = False  # True when an LLM was tried and failed, so asking again may succeed
+
+
+@dataclass
+class LLMReply:
+    text: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 def load_env(path: Path | None = None) -> dict[str, str]:
@@ -81,8 +134,9 @@ def resolve_setting(name: str, env: Mapping[str, str] | None) -> str:
     return value
 
 
-def build_prompt(pack: Pack) -> str:
-    data = json.dumps(pack.to_prompt_dict(), indent=2, sort_keys=True, ensure_ascii=False)
+def build_prompt(masked: dict, pack: Pack) -> str:
+    """The user message: the masked pack plus the two lines the reply must copy exactly."""
+    data = json.dumps(masked, indent=2, sort_keys=True, ensure_ascii=False)
     limitations = "\n".join(f"- {text}" for text in pack.limitations)
     return (
         f"Write the investigation brief for case {pack.case_id}.\n\n"
@@ -93,22 +147,45 @@ def build_prompt(pack: Pack) -> str:
     )
 
 
-def call_llm(client: Any, model: str, pack: Pack) -> str:
-    response = client.messages.create(
-        model=model,
-        max_tokens=MAX_TOKENS,
-        system=SYSTEM_PROMPT,
-        output_config={"effort": "low"},
-        messages=[{"role": "user", "content": build_prompt(pack)}],
+def make_client(provider: Provider, key: str) -> Any:
+    if provider.key == "anthropic":
+        return anthropic.Anthropic(api_key=key, timeout=REQUEST_TIMEOUT_SECONDS, max_retries=0)
+    return openai.OpenAI(
+        api_key=key, base_url=provider.base_url, timeout=REQUEST_TIMEOUT_SECONDS, max_retries=0
     )
-    if response.stop_reason == "refusal":
-        raise LLMUnusableError("the model declined the request")
-    if response.stop_reason == "max_tokens":
-        raise LLMUnusableError("the reply was cut off")
-    text = "".join(b.text for b in response.content if b.type == "text").strip()
-    if not text:
+
+
+def call_llm(client: Any, provider: Provider, model: str, user_prompt: str) -> LLMReply:
+    if provider.key == "anthropic":
+        response = client.messages.create(
+            model=model, max_tokens=MAX_TOKENS, system=SYSTEM_PROMPT,
+            output_config={"effort": "low"},
+            messages=[{"role": "user", "content": user_prompt}],
+        )  # fmt: skip
+        if response.stop_reason == "refusal":
+            raise LLMUnusableError("the model declined the request")
+        if response.stop_reason == "max_tokens":
+            raise LLMUnusableError("the reply was cut off")
+        text = "".join(b.text for b in response.content if b.type == "text")
+        usage = getattr(response, "usage", None)
+        tokens = (getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None))
+    else:
+        response = client.chat.completions.create(
+            model=model, max_tokens=MAX_TOKENS,
+            messages=[{"role": "system", "content": SYSTEM_PROMPT},
+                      {"role": "user", "content": user_prompt}],
+        )  # fmt: skip
+        choice = response.choices[0]
+        if choice.finish_reason == "length":
+            raise LLMUnusableError("the reply was cut off")
+        if choice.finish_reason == "content_filter":
+            raise LLMUnusableError("the reply was filtered")
+        text = choice.message.content or ""
+        usage = getattr(response, "usage", None)
+        tokens = (getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None))
+    if not text.strip():
         raise LLMUnusableError("the reply was empty")
-    return text
+    return LLMReply(normalize_reply(text.strip()), tokens[0], tokens[1])
 
 
 def _describe(exc: Exception) -> str:
@@ -123,33 +200,67 @@ def generate_brief(
     db_path: str | Path = DB_PATH,
     client: Any = None,
     env: Mapping[str, str] | None = None,
+    record: Callable[[dict], None] | None = None,
 ) -> Brief:
+    """The brief for a case. `record` receives one dict per LLM attempt (no real values in it)."""
     pack = build_pack(case_id, horizon, db_path)
     template = render_template(pack)
 
-    def fallback(reason: str) -> Brief:
+    def use_template(reason: str, retryable: bool = False) -> Brief:
         log.info("brief for %s uses the template: %s", case_id, reason)
-        return Brief(case_id, template, "template", reason)
+        return Brief(case_id, template, "template", reason, retryable=retryable)
 
+    name = (resolve_setting("LLM_PROVIDER", env) or "none").lower()
+    if name == "none":
+        return use_template("LLM_PROVIDER is none")
+    provider = PROVIDERS.get(name)
+    if provider is None:
+        return use_template(f"unknown LLM_PROVIDER '{name[:20]}'")
     key = resolve_setting("LLM_API_KEY", env)
-    if client is None:
-        if not key:
-            return fallback("no LLM_API_KEY is set")
-        client = anthropic.Anthropic(
-            api_key=key, timeout=REQUEST_TIMEOUT_SECONDS, max_retries=1
-        )
-    model = resolve_setting("LLM_MODEL", env) or DEFAULT_MODEL
+    if client is None and not key:
+        return use_template("no LLM_API_KEY is set")
+    model = resolve_setting("LLM_MODEL", env) or provider.default_model
+
+    def log_request(outcome: str, vault: Vault, detail: str | None, reply: LLMReply | None = None):
+        if record is None:
+            return
+        try:
+            record(
+                {
+                    "case_id": case_id, "provider": provider.key, "model": model,
+                    "outcome": outcome, "audit": audit_record(vault, provider.key),
+                    "input_tokens": reply.input_tokens if reply else None,
+                    "output_tokens": reply.output_tokens if reply else None, "detail": detail,
+                }
+            )  # fmt: skip
+        except Exception:  # noqa: BLE001 - a logging problem must not break the brief
+            log.warning("could not record the LLM request for %s", case_id)
+
     try:
-        text = call_llm(client, model, pack)
-    except LLMUnusableError as exc:
-        return fallback(f"LLM reply unusable: {exc}")
+        masked, vault = prepare(pack)
+    except LeakError as exc:  # never send anything if a value slipped through masking
+        log.warning("LLM request for %s blocked: %s", case_id, exc)
+        log_request("leak_blocked", getattr(exc, "vault", Vault()), str(exc))
+        return use_template(f"blocked before sending: {exc}", retryable=True)
+
+    try:
+        reply = call_llm(client or make_client(provider, key), provider, model, build_prompt(masked, pack))
     except Exception as exc:  # noqa: BLE001 - fail safely: any LLM problem returns the template
-        log.warning("LLM call failed: %s", _describe(exc))
-        return fallback(f"LLM call failed: {_describe(exc)}")
-    problems = validate_brief(text, pack)
+        detail = f"unusable reply: {exc}" if isinstance(exc, LLMUnusableError) else _describe(exc)
+        log.warning("LLM call for %s failed: %s", case_id, detail)
+        log_request("error", vault, detail)
+        return use_template(f"LLM call failed: {detail}", retryable=True)
+
+    # Validate the reply while it is still masked, then restore the identifiers for display.
+    problems = validate_brief(reply.text, pack)
+    problems += [f"unknown placeholder {t}" for t in unknown_placeholders(reply.text, vault)]
+    text = unmask_text(reply.text, vault) if not problems else ""
+    problems += validate_brief(text, pack) if text else []
     if problems:
-        return fallback(f"LLM text rejected: {'; '.join(problems)}")
-    return Brief(case_id, text.rstrip() + "\n", "llm", None, model)
+        log_request("validation_failed", vault, "; ".join(problems), reply)
+        return use_template(f"LLM text rejected: {'; '.join(problems)}", retryable=True)
+    log_request("llm_ok", vault, None, reply)
+    return Brief(case_id, text.rstrip() + "\n", "llm", None, model, provider.key, True)
 
 
 if __name__ == "__main__":
@@ -157,4 +268,5 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     brief = generate_brief(sys.argv[1] if len(sys.argv) > 1 else "CASE-0001")
     print(brief.text)
-    print(f"[source: {brief.source}" + (f"; {brief.fallback_reason}" if brief.fallback_reason else "") + "]")
+    note = f"; {brief.fallback_reason}" if brief.fallback_reason else f"; {MASKED_NOTE}"
+    print(f"[source: {brief.source}{' via ' + brief.provider if brief.provider else ''}{note}]")

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -37,13 +38,14 @@ from backend.api.schemas import (
     StageOut,
 )
 from backend.audit import AUDIT_PATH, AuditLog
-from backend.brief.generate import generate_brief
+from backend.brief.generate import PROVIDERS, generate_brief
 from backend.pipeline import PipelineError, PipelineState
 
 log = logging.getLogger("claimshield.api")
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 VITE_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 DEFAULT_CAPACITY_HOURS = 40.0
+RETRY_AFTER_SECONDS = 60.0  # how long a failed LLM attempt's template is reused before trying again
 
 Runner = Callable[[Path], PipelineState]
 
@@ -59,10 +61,18 @@ class Runtime:
         self.audit = AuditLog(audit_path)
         self.decisions: dict[str, dict] = self.audit.latest_decisions()
         self.overrides: dict[str, dict] = self.audit.latest_overrides()
-        self.briefs: dict[tuple[str, str, int], BriefOut] = {}
+        # (state, case, horizon) -> (brief, expiry); an expiry of None means keep until the next rerun
+        self.briefs: dict[tuple[str, str, int], tuple[BriefOut, float | None]] = {}
+        self.brief_locks: dict[tuple[str, str, int], threading.Lock] = {}
+        self.brief_guard = threading.Lock()
         self.runner = runner
         self.rerun_lock = threading.Lock()
         self.decision_lock = threading.Lock()
+
+    def lock_for(self, key: tuple[str, str, int]) -> threading.Lock:
+        """One lock per brief, so simultaneous requests for it make a single LLM call."""
+        with self.brief_guard:
+            return self.brief_locks.setdefault(key, threading.Lock())
 
     def load(self, index: int, trigger: str) -> PipelineState:
         """Run the pipeline into one of the two database files and swap it in atomically."""
@@ -75,6 +85,7 @@ class Runtime:
             raise
         self.state, self.active, self.error = state, index, None
         self.briefs.clear()
+        self.brief_locks.clear()
         self.audit.append(
             "pipeline_run",
             details={"trigger": trigger, "status": state.status,
@@ -215,18 +226,26 @@ def create_app(
         """Investigation brief: written by the LLM only if a key is set and the text validates."""
         find_case(state, case_id)
         key = (state.finished_at, case_id, horizon)
-        if key in rt.briefs:
-            return rt.briefs[key].model_copy(update={"cached": True})
-        brief = generate_brief(case_id, horizon, state.db_path)
-        out = BriefOut(
-            case_id=case_id, horizon_days=horizon, source=brief.source,
-            fallback_reason=brief.fallback_reason, model=brief.model, brief=brief.text,
-        )  # fmt: skip
-        rt.briefs[key] = out
-        rt.audit.append("brief", case_id=case_id,
-                        details={"horizon": horizon, "source": brief.source,
-                                 "fallback_reason": brief.fallback_reason})  # fmt: skip
-        return out
+        with rt.lock_for(key):  # a second request for the same brief waits, then reuses the result
+            cached = rt.briefs.get(key)
+            if cached and (cached[1] is None or cached[1] > time.monotonic()):
+                return cached[0].model_copy(update={"cached": True})
+            brief = generate_brief(
+                case_id, horizon, state.db_path, record=lambda row: rt.audit.record_llm_request(**row)
+            )
+            label = PROVIDERS[brief.provider].label if brief.provider in PROVIDERS else "Template"
+            out = BriefOut(
+                case_id=case_id, horizon_days=horizon, source=brief.source,
+                fallback_reason=brief.fallback_reason, model=brief.model, provider=brief.provider,
+                provider_label=label, masked=brief.masked, brief=brief.text,
+            )  # fmt: skip
+            expires = time.monotonic() + RETRY_AFTER_SECONDS if brief.retryable else None
+            rt.briefs[key] = (out, expires)
+            rt.audit.append("brief", case_id=case_id,
+                            details={"horizon": horizon, "source": brief.source,
+                                     "provider": brief.provider, "masked": brief.masked,
+                                     "fallback_reason": brief.fallback_reason})  # fmt: skip
+            return out
 
     @app.post("/cases/{case_id}/decision", response_model=DecisionOut, status_code=201)
     def decide(case_id: str, body: DecisionIn, rt: RuntimeDep, state: StateDep):

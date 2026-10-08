@@ -81,14 +81,64 @@ describe('Brief', () => {
     expect(screen.getByText(/Final decision rests with the assigned investigator/)).toBeInTheDocument()
   })
 
-  it('says where the brief came from', () => {
-    const { unmount } = render(<Brief brief={briefData()} validKeys={keys} onCite={vi.fn()} />)
-    expect(screen.getByTestId('brief-source')).toHaveTextContent('Source: template')
-    expect(screen.getByText(/no LLM_API_KEY is set/)).toBeInTheDocument()
-    unmount()
-    render(<Brief brief={briefData({ source: 'llm', model: 'claude-opus-5-5', fallback_reason: null })} validKeys={keys} onCite={vi.fn()} />)
-    expect(screen.getByTestId('brief-source')).toHaveTextContent('Source: LLM (claude-opus-5-5)')
+  it('shows the Template badge, with the reason, and no masked-data note', () => {
+    render(<Brief brief={briefData({ fallback_reason: 'LLM_PROVIDER is none' })} validKeys={keys} onCite={vi.fn()} />)
+    expect(screen.getByTestId('brief-source')).toHaveTextContent('Source: Template')
+    expect(screen.getByText(/LLM_PROVIDER is none/)).toBeInTheDocument()
+    expect(screen.queryByTestId('masked-note')).toBeNull()
+  })
+
+  it.each([
+    ['anthropic', 'Claude', 'claude-opus-5-5'],
+    ['xai', 'Grok', 'grok-4'],
+    ['groq', 'Groq', 'openai/gpt-oss-120b'],
+  ])('names the real provider on an LLM brief: %s is shown as %s', (provider, label, model) => {
+    render(
+      <Brief
+        brief={briefData({ source: 'llm', provider, provider_label: label, model, masked: true, fallback_reason: null })}
+        validKeys={keys}
+        onCite={vi.fn()}
+      />,
+    )
+    const badge = screen.getByTestId('brief-source')
+    expect(badge).toHaveTextContent(`Source: ${label}`)
+    expect(badge).toHaveAttribute('title', `Model: ${model}`)
+    expect(screen.getByTestId('masked-note')).toHaveTextContent(
+      'Generated from masked data. No personal details were shared.',
+    )
     expect(screen.getByText(/Checked against the evidence/)).toBeInTheDocument()
+  })
+})
+
+describe('Brief formatting from an LLM', () => {
+  const keys = new Set(['E1', 'E2'])
+  const llmBrief = (text) => briefData({ source: 'llm', provider: 'groq', provider_label: 'Groq', model: 'm', masked: true, fallback_reason: null, brief: text })
+
+  it('renders bold text and keeps citations clickable inside it', async () => {
+    const onCite = vi.fn()
+    render(<Brief brief={llmBrief('Provider **PRV-A01 [E1]** is flagged.')} validKeys={keys} onCite={onCite} />)
+    const bold = document.querySelector('strong')
+    expect(bold).toHaveTextContent('PRV-A01 [E1]')
+    expect(document.body.textContent).not.toContain('**')
+    await userEvent.click(within(bold).getByRole('button', { name: '[E1]' }))
+    expect(onCite).toHaveBeenCalledWith('E1')
+  })
+
+  it('renders a markdown table as a table, with citations in its cells clickable', async () => {
+    const onCite = vi.fn()
+    const text = ['| Date | Claims | Evidence |', '|------|--------|----------|', '| 2026-01-02 | 30 | [E2] |'].join('\n')
+    render(<Brief brief={llmBrief(text)} validKeys={keys} onCite={onCite} />)
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Date', 'Claims', 'Evidence'])
+    expect(screen.getAllByRole('cell').map((c) => c.textContent)).toEqual(['2026-01-02', '30', '[E2]'])
+    expect(document.body.textContent).not.toContain('|---')
+    await userEvent.click(screen.getByRole('button', { name: '[E2]' }))
+    expect(onCite).toHaveBeenCalledWith('E2')
+  })
+
+  it('treats a table right after a list, and a list with * markers, correctly', () => {
+    render(<Brief brief={llmBrief('* first [E1]\n* second\n| A | B |\n|---|---|\n| 1 | 2 |')} validKeys={keys} onCite={vi.fn()} />)
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    expect(screen.getAllByRole('cell')).toHaveLength(2)
   })
 })
 

@@ -21,6 +21,7 @@ def shared(tmp_path_factory):
 @pytest.fixture
 def client(shared, tmp_path, monkeypatch):
     monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.setattr(generate, "load_env", lambda path=None: {})
     app = create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db", runner=lambda path: shared)
     with TestClient(app) as test_client:

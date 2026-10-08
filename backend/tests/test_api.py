@@ -36,6 +36,8 @@ def shared(tmp_path_factory):
 @pytest.fixture
 def client(shared, tmp_path, monkeypatch):
     monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.setattr(generate, "load_env", lambda path=None: {})  # never read a real .env
     app = create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db", runner=lambda path: shared)
     with TestClient(app) as test_client:
@@ -286,7 +288,8 @@ def test_every_case_graph_is_well_formed(client, shared):
 def test_brief_uses_the_template_without_a_key_and_caches(client):
     first = client.get(f"/cases/{RING}/brief", params={"horizon": 30}).json()
     assert first["source"] == "template" and first["cached"] is False and first["horizon_days"] == 30
-    assert first["fallback_reason"] and "LLM_API_KEY" in first["fallback_reason"]
+    assert first["fallback_reason"] and "LLM_PROVIDER is none" in first["fallback_reason"]
+    assert first["provider"] is None and first["provider_label"] == "Template" and first["masked"] is False
     for heading in ("## Summary", "## Evidence", "## Timeline", "## Network context",
                     "## Confidence", "## Limitations", "## Recommended human-review action"):  # fmt: skip
         assert heading in first["brief"]
@@ -305,13 +308,17 @@ def test_brief_horizon_is_validated_and_passed_through(client):
 def test_brief_reports_when_the_llm_wrote_it(client, monkeypatch):
     monkeypatch.setattr(
         api_main, "generate_brief",
-        lambda case_id, horizon, db_path: Brief(case_id, "TEXT\n", "llm", None, "claude-opus-5-5"),
+        lambda case_id, horizon, db_path, record=None: Brief(
+            case_id, "TEXT\n", "llm", None, "claude-opus-5-5", "anthropic", True
+        ),
     )  # fmt: skip
     body = client.get(f"/cases/{RING}/brief").json()
     assert body["source"] == "llm" and body["model"] == "claude-opus-5-5" and body["fallback_reason"] is None
+    assert body["provider"] == "anthropic" and body["provider_label"] == "Claude" and body["masked"] is True
 
 
 def test_an_invalid_key_still_gives_a_template_brief(client, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("LLM_API_KEY", "sk-ant-invalid")
     monkeypatch.setattr(
         generate.anthropic, "Anthropic",

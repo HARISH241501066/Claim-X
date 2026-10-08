@@ -129,9 +129,16 @@ try {
   // ---- Brief
   await page.waitForSelector('[data-testid=brief-body]')
   const sourceText = await page.textContent('[data-testid=brief-source]')
-  check('brief states its source (LLM or template)', /Source: (LLM|template)/.test(sourceText), sourceText.trim())
+  const expected = process.env.EXPECT_SOURCE ?? 'Template' // Template, Claude, Grok or Groq
+  check(`brief shows the real source badge "${expected}"`, sourceText.trim() === `Source: ${expected}`, sourceText.trim())
+  const maskedNote = await page.locator('[data-testid=masked-note]').count()
+  check(expected === 'Template' ? 'a template brief has no masked-data note' : 'an LLM brief says it was generated from masked data',
+    expected === 'Template' ? maskedNote === 0 : (await page.textContent('[data-testid=masked-note]')).trim() === 'Generated from masked data. No personal details were shared.')
+  const briefText = await page.textContent('[data-testid=brief-body]')
+  check('the brief shows real identifiers, never placeholders', /PRV-A01|FAC-B01/.test(briefText) && !/\b(PERSON|ORG)_\d+\b/.test(briefText))
   const cites = await page.locator('[data-testid=brief-body] [data-cite]').count()
   check('brief citations are clickable', cites >= 2, `${cites} citations`)
+  await page.locator('[data-testid=brief-body]').locator('xpath=ancestor::section[1]').screenshot({ path: `${SHOTS}/brief-panel.png` })
   await page.locator('[data-testid=brief-body] [data-cite=E1]').first().click()
   check('clicking a citation selects its evidence', (await page.locator('#evidence-E1').getAttribute('aria-current')) === 'true')
   await shot('3-case-top')

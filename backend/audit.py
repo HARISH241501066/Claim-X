@@ -21,7 +21,22 @@ CREATE TRIGGER IF NOT EXISTS audit_log_no_update BEFORE UPDATE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
+
+-- One row per LLM request attempt: which kinds of values were masked and how many tokens were
+-- used. It never holds real values, the vault, the prompt or the reply.
+CREATE TABLE IF NOT EXISTS llm_requests (
+    request_id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, case_id TEXT NOT NULL,
+    provider TEXT NOT NULL, model TEXT,
+    outcome TEXT NOT NULL CHECK (outcome IN ('llm_ok', 'validation_failed', 'leak_blocked', 'error')),
+    tokens_by_kind TEXT NOT NULL, dropped_fields TEXT NOT NULL,
+    input_tokens INTEGER, output_tokens INTEGER, detail TEXT);
+CREATE TRIGGER IF NOT EXISTS llm_requests_no_update BEFORE UPDATE ON llm_requests
+BEGIN SELECT RAISE(ABORT, 'llm_requests is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS llm_requests_no_delete BEFORE DELETE ON llm_requests
+BEGIN SELECT RAISE(ABORT, 'llm_requests is append-only'); END;
 """
+
+DETAIL_LIMIT = 300
 
 
 def now_iso() -> str:
@@ -83,6 +98,55 @@ class AuditLog:
         finally:
             con.close()
         return [self._entry(r) for r in rows]
+
+    def record_llm_request(
+        self,
+        *,
+        case_id: str,
+        provider: str,
+        model: str | None,
+        outcome: str,
+        audit: dict,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        detail: str | None = None,
+    ) -> dict:
+        """Log one LLM attempt. `audit` is masker.audit_record(): token kinds and dropped field
+        names only. `detail` is a short reason code, never reply text."""
+        con = self._connect()
+        try:
+            with con:
+                cursor = con.execute(
+                    "INSERT INTO llm_requests (ts, case_id, provider, model, outcome, tokens_by_kind, "
+                    "dropped_fields, input_tokens, output_tokens, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (now_iso(), case_id, provider, model, outcome,
+                     json.dumps(audit.get("tokens_by_kind", {}), sort_keys=True),
+                     json.dumps(audit.get("dropped_fields", [])), input_tokens, output_tokens,
+                     (detail or None) and detail[:DETAIL_LIMIT]),
+                )  # fmt: skip
+            row = con.execute(
+                "SELECT * FROM llm_requests WHERE request_id = ?", (cursor.lastrowid,)
+            ).fetchone()
+        finally:
+            con.close()
+        return self._llm_entry(row)
+
+    @staticmethod
+    def _llm_entry(row: sqlite3.Row) -> dict:
+        entry = dict(row)
+        entry["tokens_by_kind"] = json.loads(entry["tokens_by_kind"])
+        entry["dropped_fields"] = json.loads(entry["dropped_fields"])
+        return entry
+
+    def list_llm_requests(self, limit: int = 100) -> list[dict]:
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT * FROM llm_requests ORDER BY request_id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        finally:
+            con.close()
+        return [self._llm_entry(r) for r in rows]
 
     def latest_decisions(self) -> dict[str, dict]:
         """The most recent decision per case."""

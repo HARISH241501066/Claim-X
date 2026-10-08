@@ -9,7 +9,7 @@ import anthropic
 import httpx2
 import pytest
 
-from backend.brief import evidence, generate, template, validator
+from backend.brief import evidence, generate, llm_payload, template, validator
 from backend.brief.evidence import CaseNotFoundError, build_pack
 from backend.cases import ranking
 from backend.data import generator as gen
@@ -17,6 +17,7 @@ from backend.detect import anomaly, engine, graph
 from backend.predict import model as risk_model
 
 SECRET = "sk-ant-TEST-secret-key-do-not-log"
+CLAUDE = {"LLM_PROVIDER": "anthropic", "LLM_API_KEY": "test-key"}  # an LLM is switched on
 REAL_ANTHROPIC = anthropic.Anthropic  # captured before any test patches the module
 CITATION = re.compile(r"\[(E\d+)\]")
 
@@ -323,11 +324,22 @@ def test_banned_words_are_matched_case_insensitively(ring_pack):
 # ------------------------------------------------------------ generation
 
 
-def test_without_a_key_the_template_is_used(world, ring_pack):
-    for env in ({}, {"LLM_API_KEY": ""}, {"LLM_API_KEY": "   "}):
-        brief = generate.generate_brief(world["ring"], db_path=world["db"], env=env)
-        assert brief.source == "template" and "LLM_API_KEY" in brief.fallback_reason
-        assert brief.text == template.render_template(ring_pack)
+@pytest.mark.parametrize(
+    ("env", "why"),
+    [
+        ({}, "LLM_PROVIDER is none"),  # the default: no LLM at all
+        ({"LLM_PROVIDER": "none", "LLM_API_KEY": "k"}, "LLM_PROVIDER is none"),  # a key alone does nothing
+        ({"LLM_PROVIDER": "anthropic"}, "no LLM_API_KEY"),
+        ({"LLM_PROVIDER": "xai", "LLM_API_KEY": ""}, "no LLM_API_KEY"),
+        ({"LLM_PROVIDER": "groq", "LLM_API_KEY": "   "}, "no LLM_API_KEY"),
+        ({"LLM_PROVIDER": "bogus", "LLM_API_KEY": "k"}, "unknown LLM_PROVIDER"),
+    ],
+)
+def test_without_a_provider_or_a_key_the_template_is_used(world, ring_pack, env, why):
+    brief = generate.generate_brief(world["ring"], db_path=world["db"], env=env)
+    assert brief.source == "template" and why in brief.fallback_reason
+    assert brief.provider is None and brief.masked is False
+    assert brief.text == template.render_template(ring_pack)
 
 
 def test_a_valid_llm_brief_is_used(world, ring_pack):
@@ -335,8 +347,9 @@ def test_a_valid_llm_brief_is_used(world, ring_pack):
         "# Investigation brief", "# Investigation brief (drafted)"
     )
     client = FakeClient(reply=drafted)
-    brief = generate.generate_brief(world["ring"], db_path=world["db"], client=client)
+    brief = generate.generate_brief(world["ring"], db_path=world["db"], client=client, env=CLAUDE)
     assert brief.source == "llm" and brief.fallback_reason is None
+    assert brief.provider == "anthropic" and brief.masked is True
     assert brief.text.startswith("# Investigation brief (drafted)")
     assert set(citations(brief.text)) <= set(ring_pack.keys)
     assert brief.model == "claude-opus-5-5" and client.calls[0]["model"] == "claude-opus-5-5"
@@ -344,22 +357,22 @@ def test_a_valid_llm_brief_is_used(world, ring_pack):
 
 def test_the_model_can_be_overridden(world, ring_pack):
     client = FakeClient(reply=template.render_template(ring_pack))
-    env = {"LLM_API_KEY": "k", "LLM_MODEL": "claude-sonnet-5-5"}
+    env = {**CLAUDE, "LLM_MODEL": "claude-sonnet-5-5"}
     generate.generate_brief(world["ring"], db_path=world["db"], client=client, env=env)
     assert client.calls[0]["model"] == "claude-sonnet-5-5"
 
 
 def test_the_prompt_is_built_from_the_pack_and_states_the_rules(world, ring_pack):
     client = FakeClient(reply=template.render_template(ring_pack))
-    generate.generate_brief(world["ring"], db_path=world["db"], client=client)
+    generate.generate_brief(world["ring"], db_path=world["db"], client=client, env=CLAUDE)
     call = client.calls[0]
     system, user = call["system"], call["messages"][0]["content"]
     for rule in ("Use only the evidence pack", "[E1]", "suspicious", "Never state or imply guilt",
-                 "Do not change the confidence level or the limitations",
+                 "Do not change the confidence level or the limitations", "PERSON_1",
                  template.FINAL_LINE):  # fmt: skip
         assert rule in system, rule
     assert "Confidence level: Medium" in user and evidence.SYNTHETIC_LIMITATION in user
-    assert '"key": "E1"' in user and '"claim_count": 180' in user
+    assert '"evidence_key": "E1"' in user and '"count": 180' in user
     assert user.count("CLM-") < 40 and len(user) < 60_000  # claim lists are trimmed
     assert call["max_tokens"] >= 4000
 
@@ -368,7 +381,7 @@ def test_the_prompt_is_built_from_the_pack_and_states_the_rules(world, ring_pack
 def test_invalid_llm_text_falls_back_to_the_template(world, ring_pack, name):
     good = template.render_template(ring_pack)
     client = FakeClient(reply=MUTATIONS[name](good))
-    brief = generate.generate_brief(world["ring"], db_path=world["db"], client=client)
+    brief = generate.generate_brief(world["ring"], db_path=world["db"], client=client, env=CLAUDE)
     assert brief.source == "template" and brief.text == good
     assert "LLM text rejected" in brief.fallback_reason
 
@@ -386,14 +399,14 @@ def test_invalid_llm_text_falls_back_to_the_template(world, ring_pack, name):
     ids=["empty", "refusal", "truncated", "runtime error", "connection error", "timeout"],
 )
 def test_llm_problems_fall_back_to_the_template(world, ring_pack, client):
-    brief = generate.generate_brief(world["ring"], db_path=world["db"], client=client)
+    brief = generate.generate_brief(world["ring"], db_path=world["db"], client=client, env=CLAUDE)
     assert brief.source == "template" and brief.text == template.render_template(ring_pack)
     assert brief.fallback_reason
 
 
 def test_an_invalid_api_key_still_returns_the_template_brief(world, ring_pack):
     client = sdk_client(rejected_401)  # the real SDK, answered with a 401
-    brief = generate.generate_brief(world["ring"], db_path=world["db"], client=client)
+    brief = generate.generate_brief(world["ring"], db_path=world["db"], client=client, env=CLAUDE)
     assert brief.source == "template"
     assert "AuthenticationError" in brief.fallback_reason and "401" in brief.fallback_reason
     assert brief.text == template.render_template(ring_pack)
@@ -403,13 +416,13 @@ def test_an_invalid_api_key_still_returns_the_template_brief(world, ring_pack):
 def test_a_good_reply_through_the_real_sdk_is_accepted(world, ring_pack):
     text = template.render_template(ring_pack)
     client = sdk_client(lambda request: httpx2.Response(200, json=message_json(text)))
-    brief = generate.generate_brief(world["ring"], db_path=world["db"], client=client)
+    brief = generate.generate_brief(world["ring"], db_path=world["db"], client=client, env=CLAUDE)
     assert brief.source == "llm" and brief.text == text
 
 
 def test_the_ring_brief_has_only_valid_citations_with_or_without_the_llm(world, ring_pack):
-    for client in (None, sdk_client(rejected_401)):
-        brief = generate.generate_brief(world["ring"], db_path=world["db"], client=client, env={})
+    for client, env in ((None, {}), (sdk_client(rejected_401), CLAUDE)):
+        brief = generate.generate_brief(world["ring"], db_path=world["db"], client=client, env=env)
         found = citations(brief.text)
         assert found and set(found) <= set(ring_pack.keys)
         assert not re.findall(r"\[E(?!\d+\])", brief.text)  # no malformed citations
@@ -426,13 +439,14 @@ def test_the_api_key_is_only_given_to_the_client_and_never_leaks(world, ring_pac
     monkeypatch.setattr(generate.anthropic, "Anthropic", fake_anthropic)
     with caplog.at_level(logging.DEBUG):
         brief = generate.generate_brief(
-            world["ring"], db_path=world["db"], env={"LLM_API_KEY": SECRET}
+            world["ring"], db_path=world["db"],
+            env={"LLM_PROVIDER": "anthropic", "LLM_API_KEY": SECRET},
         )
-    assert seen["api_key"] == SECRET and seen["max_retries"] <= 1
+    assert seen["api_key"] == SECRET and seen["max_retries"] == 0 and seen["timeout"] == 15.0
     assert brief.source == "template"
     assert SECRET not in brief.text and SECRET not in (brief.fallback_reason or "")
     assert SECRET not in caplog.text
-    prompt = generate.build_prompt(ring_pack)
+    prompt = generate.build_prompt(llm_payload.prepare(ring_pack)[0], ring_pack)
     assert SECRET not in prompt and "LLM_API_KEY" not in prompt
 
 

@@ -22,4 +22,13 @@ cp .env.example .env
 
 ## Using the workbench
 Start the API (`make api`, about 5 seconds to build the data and analysis) and the web app (`make web`), then open http://localhost:5173.
-Overview shows the headline numbers, Queue ranks cases against your team's hours, and each case opens with its evidence, network, timeline, risk estimate and brief. Every decision or priority change needs your name and a reason and is written to the audit log (`backend/audit.db`; set `CLAIMSHIELD_AUDIT_PATH` to use another file). Set `LLM_API_KEY` to let Claude write briefs; without it, or if its text fails validation, the built-in template is used.
+Overview shows the headline numbers, Queue ranks cases against your team's hours, and each case opens with its evidence, network, timeline, risk estimate and brief. Every decision or priority change needs your name and a reason and is written to the audit log (`backend/audit.db`; set `CLAIMSHIELD_AUDIT_PATH` to use another file).
+
+### Optional: let an LLM write the brief
+Copy `.env.example` to `.env` (git ignores it) and set:
+```
+LLM_PROVIDER=groq        # anthropic (Claude), xai (Grok), groq, or none (the default)
+LLM_API_KEY=...          # the key for that provider
+LLM_MODEL=               # optional; defaults: claude-opus-5-5, grok-4, openai/gpt-oss-120b
+```
+A key on its own does nothing: `LLM_PROVIDER` must name a provider. Only a masked copy of the evidence is sent (names and identifiers become placeholders such as `PERSON_1`; a leak check runs before every request and blocks the call if anything slipped through). The reply is checked (valid `[E#]` citations, all sections, no accusatory wording) while still masked, then the identifiers are restored on your server. If anything fails, or after a 15-second timeout, the built-in template brief is used. Each attempt is logged in the `llm_requests` table of the audit database with token counts and field names only, never real values.

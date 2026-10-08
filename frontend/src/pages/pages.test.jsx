@@ -202,7 +202,7 @@ describe('Case detail page', () => {
     expect(await screen.findByTestId('graph-stub')).toHaveTextContent('3 nodes')
     expect(screen.getAllByTestId('timeline-entry')).toHaveLength(2)
     expect(screen.getByRole('heading', { name: '30-Day Investigation Risk: 2.8%' })).toBeInTheDocument()
-    expect(await screen.findByTestId('brief-source')).toHaveTextContent('Source: template')
+    expect(await screen.findByTestId('brief-source')).toHaveTextContent('Source: Template')
     expect(screen.getByRole('heading', { name: 'AI Recommendation' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Your Decision' })).toBeInTheDocument()
     expect(api.getBrief).toHaveBeenCalledWith('CASE-0001', 30, expect.any(AbortSignal))

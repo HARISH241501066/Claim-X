@@ -202,6 +202,9 @@ class BriefOut(BaseModel):
     source: Literal["llm", "template"]
     fallback_reason: str | None = None
     model: str | None = None
+    provider: str | None = None  # who wrote it: anthropic, xai or groq; null for the template
+    provider_label: str = "Template"  # what the screen shows: Claude, Grok, Groq or Template
+    masked: bool = False  # True when an LLM wrote it from masked data
     cached: bool = False
     brief: str
 
