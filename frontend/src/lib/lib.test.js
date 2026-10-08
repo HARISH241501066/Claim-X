@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { API_URL, errorMessage } from '../api'
 import { count, dateRange, hours, riskPercent, rupees } from './format'
 import { ACTIONS, validateReason } from './review'
-import { HORIZONS, isTrained, tooltipText } from './risk'
+import { HORIZONS, forHorizon, isTrained, tooltipText } from './risk'
 import { DEFAULT_WEIGHTS, WEIGHT_KEYS, normalizeWeights, percentShares, weightsParam } from './weights'
 
 const total = (obj) => Object.values(obj).reduce((a, b) => a + b, 0)
@@ -107,9 +107,17 @@ describe('risk panel text', () => {
     expect(tooltipText(90)).toContain('within 90 days')
   })
 
-  it('only the 30-day model is trained', () => {
+  it('without the API\'s per-window estimates only the 30-day window is offered', () => {
     expect(HORIZONS).toEqual([30, 60, 90])
-    expect(HORIZONS.filter(isTrained)).toEqual([30])
+    expect(HORIZONS.filter((h) => isTrained(h))).toEqual([30])
+  })
+
+  it('a window is offered when the API has an estimate for it', () => {
+    const predictions = { 30: { available: true }, 60: { available: true }, 90: { available: false, reason: 'Insufficient data' } }
+    expect(HORIZONS.filter((h) => isTrained(h, predictions))).toEqual([30, 60])
+    expect(forHorizon(60, { available: true, horizon_days: 30 }, { 60: { available: true, horizon_days: 60 } }).horizon_days).toBe(60)
+    expect(forHorizon(90, {}, { 30: { available: true } }).available).toBe(false)
+    expect(forHorizon(30, { x: 1 }, undefined)).toEqual({ x: 1 })
   })
 })
 

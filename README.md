@@ -92,7 +92,7 @@ Other commands: `make coverage` (tests with a coverage report), `make web-test` 
 | Rule: repeat history | A provider with a confirmed past case whose volume is rising again. |
 | Isolation Forest | Providers whose overall profile is unusual against peers of the same specialty. |
 | Graph analytics (NetworkX, Louvain) | Referral rings: communities of providers and facilities with heavy shared patients and self-referral between related owners. |
-| Gradient Boosting | A 30-day **investigation risk** per provider (how likely a confirmed investigation is), shown beside the evidence, never instead of it. |
+| Gradient Boosting | A 30-, 60- and 90-day **investigation risk** per provider (how likely a confirmed investigation is within that window), one model per window, shown beside the evidence, never instead of it. Case ranking uses the 30-day estimate. |
 
 New rules are plug-ins: drop a file into `backend/detect/rules/` and it runs with no engine change.
 
@@ -115,20 +115,17 @@ Every planted scenario is found, and the two honest decoys are not flagged. Prod
 
 "Caught by" lists every detector that flagged at least one planted entity, so a second detector may appear for a few overlapping claims. Cases are grouped by provider, so several scenarios can share a case.
 
-The risk model is evaluated alone, on the held-out last cut-off (`metrics.json`):
+The risk models are evaluated alone, one per window, on each window's last held-out cut-off (`metrics.json`):
 
-| Metric | Value |
-|---|---|
-| Training rows / positives | 120 / 12 |
-| Test rows / positives | 40 / 3 |
-| Precision at 5 | 0.0 |
-| Precision at 10 | 0.1 |
-| Recall at threshold 0.3 | 0.0 |
-| PR-AUC (base rate 0.075) | 0.145 |
+| Window | Train rows / positives | Test rows / positives | Precision at 5 | Precision at 10 | Recall at 0.3 | PR-AUC (base rate) |
+|---|---|---|---|---|---|---|
+| 30 days | 120 / 12 | 40 / 3 | 0.0 | 0.1 | 0.0 | 0.145 (0.075) |
+| 60 days | 120 / 18 | 40 / 8 | 0.6 | 0.6 | 0.375 | 0.642 (0.200) |
+| 90 days | 80 / 15 | 40 / 10 | 0.6 | 0.6 | 0.6 | 0.627 (0.250) |
 
-These are low, and reported as they are: there are only 40 providers and 3 positives in the test window, so the numbers check that the pipeline works, not real-world accuracy. That is why a transparent history rule backs the model (a repeat offender is raised to High and the band says so: `band_source: escalated`).
+Read these with care. There are only 40 providers, and the history is six months long, so each window has a handful of positives. A longer window sees more investigations (a higher base rate), which is why its numbers look better; they check that the pipeline works, not real-world accuracy. The 60- and 90-day models also learn from 31 January (a row with under 60 days of history), because their labels need a long observed window. A transparent history rule backs the models: a repeat offender is raised to High in every window and the band says so (`band_source: escalated`). The three models are separate, so a longer window can come out lower than a shorter one; the screen then says so instead of changing the number.
 
-Backend tests: 498 passing (run with no network access), coverage 97% of `backend/`. Frontend: unit tests plus a real-Chrome end-to-end run.
+Backend tests: 513 passing (run with no network access), coverage 97% of `backend/`. Frontend: unit tests plus a real-Chrome end-to-end run.
 
 ## Responsible AI
 
@@ -145,7 +142,7 @@ Backend tests: 498 passing (run with no network access), coverage 97% of `backen
 
 - **Synthetic data only.** The scenarios are planted by a generator, so results show the pipeline works, not how it would perform on real claims.
 - **Small history.** About 40 providers and 300 members, so the risk model has few positives; the history rule backs it up and the metrics are modest.
-- **30-day horizon only.** 60- and 90-day risk models are not trained; the screen shows them as unavailable.
+- **Thin 60- and 90-day models.** They exist and are shown, but with a six-month history they learn from very few positives (the 90-day model has only two cut-offs to learn and test on). Treat them as demonstrations of the pipeline.
 - **Demo-grade sign-in.** Real bcrypt passwords, signed tokens and API-enforced roles, but no password reset, no token revocation list and no multi-factor sign-in.
 - **LLM output varies.** A reply that breaks the rules falls back to the template, and a provider's rate limit can delay a brief. Only Groq was tested live; Claude and Grok are covered by mocks and SDK-level tests.
 - **Outbound messages are simulated.** Nothing is ever sent to a provider or member.

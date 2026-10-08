@@ -298,6 +298,17 @@ describe('Case detail page', () => {
     noBannedWords()
   })
 
+  it('switches the risk panel between 30, 60 and 90 days', async () => {
+    open('/cases/CASE-0001')
+    expect(await screen.findByRole('heading', { name: /^30-Day Investigation Risk/ })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('radio', { name: '60 days' }))
+    expect(screen.getByRole('heading', { name: '60-Day Investigation Risk: 10%' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('radio', { name: '90 days' }))
+    expect(screen.getByRole('heading', { name: '90-Day Investigation Risk: 18%' })).toBeInTheDocument()
+    expect(api.getCase).toHaveBeenCalledTimes(1) // switching needs no new request
+    noBannedWords()
+  })
+
   it('shows a ring case and a provider case with the right badge', async () => {
     api.getCase.mockResolvedValue(caseDetail({ case_id: 'CASE-0003', title: 'Upcoding pattern: PRV-005', case_type: 'provider', detectors_fired: ['rules'], confidence: { level: 'Low', reasons: ['1 of 3'] } }))
     open('/cases/CASE-0003')

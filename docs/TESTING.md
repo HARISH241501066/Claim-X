@@ -16,6 +16,7 @@ Run everything with `make test` (backend tests and lint) and `make web-test` (fr
 | Prediction is called investigation risk; the banned name appears nowhere | `test_predict.py`: `test_the_banned_name_appears_nowhere_in_the_codebase` (scans backend and frontend) |
 | Repeat offender gets a High band with its source shown | `test_predict.py`: `test_the_repeat_offender_gets_a_high_30_day_band` |
 | metrics.json holds model-only metrics | `test_predict.py`: `test_metrics_json_has_all_four_metrics`, `test_metrics_are_reproducible` |
+| 30, 60 and 90-day risk: cut-offs per window, censoring, one model each, `Insufficient data` when a window has no positives, the 30-day result unchanged, all three windows in the API and report | `test_horizons.py` |
 | Brief: unknown `[E99]`, banned words, or an LLM error give the template | `test_brief.py`: `test_validator_rejects_bad_briefs`, `test_banned_words_are_matched_case_insensitively`, `test_invalid_llm_text_falls_back_to_the_template`, `test_llm_problems_fall_back_to_the_template` |
 | Masking: the payload has no real identifiers | `test_llm_masked.py`: `test_the_payload_sent_contains_no_real_names_or_identifiers`, `test_every_case_can_be_masked_with_nothing_left_and_nothing_dropped` |
 | A leak error means the LLM is never called | `test_llm_masked.py`: `test_a_leak_error_means_the_llm_is_never_called` |

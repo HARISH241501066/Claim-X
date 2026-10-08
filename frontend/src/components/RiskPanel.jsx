@@ -1,9 +1,10 @@
 import { riskPercent } from '../lib/format'
-import { HORIZONS, isTrained, tooltipText } from '../lib/risk'
+import { HORIZONS, forHorizon, isTrained, tooltipText } from '../lib/risk'
 import { BandBadge, Badge, Card, InfoTip } from './ui'
 
 /** The model's investigation risk for the case, with band, drivers and a plain-language caveat. */
-export default function RiskPanel({ prediction, horizon = 30, onHorizon = () => {} }) {
+export default function RiskPanel({ prediction: thirty, predictions, horizon = 30, onHorizon = () => {} }) {
+  const prediction = forHorizon(horizon, thirty, predictions)
   const available = prediction?.available
   const title = `${horizon}-Day Investigation Risk: ${available ? riskPercent(prediction.investigation_risk) : 'Insufficient data'}`
   const escalated = available && prediction.band_source === 'escalated'
@@ -20,8 +21,8 @@ export default function RiskPanel({ prediction, horizon = 30, onHorizon = () => 
             type="button"
             role="radio"
             aria-checked={h === horizon}
-            disabled={!isTrained(h)}
-            title={isTrained(h) ? `${h}-day window` : `The ${h}-day model is not trained yet`}
+            disabled={!isTrained(h, predictions)}
+            title={isTrained(h, predictions) ? `${h}-day window` : (predictions?.[String(h)]?.reason ?? `No ${h}-day estimate`)}
             onClick={() => onHorizon(h)}
             className={`rounded px-3 py-1 text-xs font-medium ${
               h === horizon ? 'bg-accent/20 text-ink' : 'text-ink-2'
@@ -43,6 +44,11 @@ export default function RiskPanel({ prediction, horizon = 30, onHorizon = () => 
               for {prediction.provider_id} · {prediction.history_days} days of history
             </span>
           </div>
+          {prediction.note && (
+            <p className="rounded-md border border-line bg-surface-2 p-2 text-xs leading-relaxed text-ink-2" data-testid="horizon-note">
+              {prediction.note}
+            </p>
+          )}
           {escalated && (
             <p className="rounded-md border border-warn/40 bg-warn/10 p-2 text-xs leading-relaxed text-ink-2" data-testid="band-escalated">
               {prediction.band_reason}. The model&apos;s own estimate is {riskPercent(prediction.investigation_risk)}.

@@ -115,6 +115,14 @@ export const accessData = (over = {}) => ({
   assigned_at: '2026-10-08T09:00:00Z', can_decide: true, can_assign: false, can_outbound: true, can_report: true, ...over,
 })
 
+/** The estimates for the three windows, keyed the way the API returns them. */
+export const windows = (over = {}) => ({
+  30: prediction(),
+  60: prediction({ horizon_days: 60, investigation_risk: 0.1, risk_band: 'Low', band_reason: 'Model estimate 0.10' }),
+  90: prediction({ horizon_days: 90, investigation_risk: 0.18, risk_band: 'Low', band_reason: 'Model estimate 0.18' }),
+  ...over,
+})
+
 export const caseDetail = (over = {}) => ({
   case_id: 'CASE-0001',
   title: 'Referral network: RING-01 (5 linked entities)',
@@ -142,6 +150,7 @@ export const caseDetail = (over = {}) => ({
     { date: '2026-02-02', end_date: '2026-02-23', kind: 'ring claims', description: '30 ring claims worth Rs 56,922 in 2026-02', evidence_keys: ['E2'], count: 30, amount: 56922 },
   ],
   prediction: prediction(),
+  predictions: windows(),
   confidence: { level: 'Medium', reasons: ['2 of 3 detector groups fired', 'prediction band Low'] },
   limitations: ['Synthetic data: all records are simulated.'],
   decisions: [],

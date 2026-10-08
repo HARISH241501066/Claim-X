@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import { briefData, caseDetail, evidenceRows, factors, prediction, providerItem, queueData, queueItem } from '../test/fixtures'
+import { briefData, caseDetail, evidenceRows, factors, prediction, providerItem, queueData, queueItem, windows } from '../test/fixtures'
 import Async from './Async'
 import Brief from './Brief'
 import DetectorChips from './DetectorChips'
@@ -182,6 +182,48 @@ describe('RiskPanel', () => {
     expect(screen.getByRole('radio', { name: '90 days' })).toBeDisabled()
     await userEvent.click(screen.getByRole('radio', { name: '90 days' }))
     expect(onHorizon).not.toHaveBeenCalled()
+  })
+
+  it('offers every window the API has an estimate for, and switches the whole panel with it', async () => {
+    const onHorizon = vi.fn()
+    const predictions = windows()
+    const { rerender } = render(<RiskPanel prediction={predictions[30]} predictions={predictions} horizon={30} onHorizon={onHorizon} />)
+    expect(screen.getByRole('heading', { name: '30-Day Investigation Risk: 2.8%' })).toBeInTheDocument()
+    for (const days of ['30 days', '60 days', '90 days']) expect(screen.getByRole('radio', { name: days })).toBeEnabled()
+    await userEvent.click(screen.getByRole('radio', { name: '90 days' }))
+    expect(onHorizon).toHaveBeenCalledWith(90)
+    rerender(<RiskPanel prediction={predictions[30]} predictions={predictions} horizon={90} onHorizon={onHorizon} />)
+    expect(screen.getByRole('heading', { name: '90-Day Investigation Risk: 18%' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: '90 days' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('within 90 days')
+    BANNED.forEach((phrase) => expect(lower()).not.toContain(phrase))
+  })
+
+  it('disables a window without an estimate and says why', () => {
+    const predictions = windows({ 90: { available: false, reason: 'Insufficient data: no 90-day investigation_risk for these providers' } })
+    render(<RiskPanel prediction={predictions[30]} predictions={predictions} horizon={30} />)
+    expect(screen.getByRole('radio', { name: '60 days' })).toBeEnabled()
+    const ninety = screen.getByRole('radio', { name: '90 days' })
+    expect(ninety).toBeDisabled()
+    expect(ninety).toHaveAttribute('title', expect.stringContaining('Insufficient data'))
+  })
+
+  it('shows Insufficient data for the chosen window instead of a number, and the escalation note per window', () => {
+    const predictions = windows({
+      60: prediction({ horizon_days: 60, investigation_risk: 0.2, risk_band: 'High', band_source: 'escalated', band_reason: 'Raised to High by history rule: 1 prior confirmed investigation(s)' }),
+      90: { available: false, reason: 'Insufficient data: no 90-day investigation_risk' },
+    })
+    const { rerender } = render(<RiskPanel prediction={predictions[30]} predictions={predictions} horizon={60} />)
+    expect(screen.getByTestId('band-escalated')).toHaveTextContent('model\'s own estimate is 20%')
+    rerender(<RiskPanel prediction={predictions[30]} predictions={predictions} horizon={90} />)
+    expect(screen.getByRole('heading', { name: '90-Day Investigation Risk: Insufficient data' })).toBeInTheDocument()
+  })
+
+  it('explains a longer window that comes out lower than the one before it', () => {
+    const predictions = windows({ 60: prediction({ horizon_days: 60, investigation_risk: 0.01, note: 'Lower than the 30-day estimate, although a longer window should not be less likely.' }) })
+    render(<RiskPanel prediction={predictions[30]} predictions={predictions} horizon={60} />)
+    expect(screen.getByTestId('horizon-note')).toHaveTextContent('Lower than the 30-day estimate')
+    expect(screen.getByRole('heading', { name: '60-Day Investigation Risk: 1.0%' })).toBeInTheDocument() // the number is not changed
   })
 
   it('shows the band, the top three drivers and a low-confidence notice', () => {

@@ -149,7 +149,7 @@ export default function CaseDetail() {
                 </div>
 
                 <aside className="min-w-0 space-y-6 lg:sticky lg:top-6 lg:self-start">
-                  <RiskPanel prediction={d.prediction} horizon={horizon} onHorizon={setHorizon} />
+                  <RiskPanel prediction={d.prediction} predictions={d.predictions} horizon={horizon} onHorizon={setHorizon} />
                   <AssignmentPanel key={`assign-${d.case_id}-${version}`} detail={d} onChanged={() => setVersion((v) => v + 1)} />
                   {d.access?.can_decide === false ? (
                     <>
