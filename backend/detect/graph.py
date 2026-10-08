@@ -43,7 +43,7 @@ CREATE TABLE communities (
     community_id TEXT PRIMARY KEY, method TEXT NOT NULL, size INTEGER NOT NULL,
     nodes TEXT NOT NULL, n_claims INTEGER NOT NULL, flagged_amount INTEGER NOT NULL,
     rule_hits_per_100 REAL NOT NULL, mean_anomaly REAL NOT NULL, self_referral INTEGER NOT NULL,
-    score REAL NOT NULL, score_rank INTEGER NOT NULL);
+    score REAL NOT NULL, score_rank INTEGER NOT NULL, ring_id TEXT);
 """
 
 
@@ -313,13 +313,13 @@ def _reason(row: pd.Series, pairs: pd.DataFrame, n_flagged_claims: int) -> str:
     return "; ".join(parts) + ". Suspicious network that warrants review."
 
 
-def ring_findings(
-    scores: pd.DataFrame, pairs: pd.DataFrame, flagged_ids: dict[int, set[str]]
-) -> list[Finding]:
-    """Top communities as rings. A ring needs common control: a self-referral link."""
-    findings = []
+def select_rings(
+    scores: pd.DataFrame, flagged_ids: dict[int, set[str]]
+) -> list[tuple[str, object, list[str]]]:
+    """Top communities as rings: (ring id, score row, evidence). A ring needs a self-referral link."""
+    picked: list[tuple[str, object, list[str]]] = []
     for row in scores.itertuples():
-        if len(findings) >= TOP_COMMUNITIES or row.score < MIN_RING_SCORE:
+        if len(picked) >= TOP_COMMUNITIES or row.score < MIN_RING_SCORE:
             break
         if not row.self_referral:
             continue
@@ -327,18 +327,24 @@ def ring_findings(
         if not evidence:
             log.info("Insufficient data: community %s has no flagged claims", row.community)
             continue
-        series = pd.Series(row._asdict())
-        findings.append(
-            Finding(
-                entity_id=f"RING-{len(findings) + 1:02d}",
-                detector="ring",
-                score=min(1.0, float(row.score)),
-                severity="high" if row.score >= 0.7 else "medium",
-                reason=_reason(series, pairs, len(evidence)),
-                evidence_ids=evidence,
-            )
+        picked.append((f"RING-{len(picked) + 1:02d}", row, evidence))
+    return picked
+
+
+def ring_findings(
+    scores: pd.DataFrame, pairs: pd.DataFrame, flagged_ids: dict[int, set[str]]
+) -> list[Finding]:
+    return [
+        Finding(
+            entity_id=ring_id,
+            detector="ring",
+            score=min(1.0, float(row.score)),
+            severity="high" if row.score >= 0.7 else "medium",
+            reason=_reason(pd.Series(row._asdict()), pairs, len(evidence)),
+            evidence_ids=evidence,
         )
-    return findings
+        for ring_id, row, evidence in select_rings(scores, flagged_ids)
+    ]
 
 
 # ---------------------------------------------------------------- UI subgraph
@@ -391,6 +397,7 @@ class GraphResult:
     communities: Communities
     scores: pd.DataFrame
     findings: list[Finding]
+    ring_ids: dict[int, str] = field(default_factory=dict)  # community -> RING-NN
 
 
 def save_results(db_path: str | Path, result: GraphResult) -> None:
@@ -401,12 +408,12 @@ def save_results(db_path: str | Path, result: GraphResult) -> None:
         con.execute("DROP TABLE IF EXISTS communities")
         con.executescript(COMMUNITIES_DDL)
         con.executemany(
-            "INSERT INTO communities VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO communities VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     f"COM-{r.community:02d}", r.method, int(r.size), json.dumps(r.nodes),
                     int(r.n_claims), int(r.flagged_amount), float(r.rule_hits_per_100),
-                    float(r.mean_anomaly), int(r.self_referral), float(r.score), int(r.score_rank),
+                    float(r.mean_anomaly), int(r.self_referral), float(r.score), int(r.score_rank), result.ring_ids.get(r.community),
                 )
                 for r in result.scores.itertuples()
             ],
@@ -428,7 +435,11 @@ def analyze(
         entity_graph(tables, pairs), self_referral_subgraph(tables, pairs), partition_fn
     )
     scores, flagged_ids = score_communities(comms, tables, pairs, rule_claims, anomaly)
-    return GraphResult(pairs, comms, scores, ring_findings(scores, pairs, flagged_ids))
+    rings = select_rings(scores, flagged_ids) if not scores.empty else []
+    return GraphResult(
+        pairs, comms, scores, ring_findings(scores, pairs, flagged_ids) if rings else [],
+        {row.community: ring_id for ring_id, row, _ in rings},
+    )
 
 
 def run(db_path: str | Path = DB_PATH) -> GraphResult:
