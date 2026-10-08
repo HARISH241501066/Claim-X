@@ -6,3 +6,10 @@ extend-exclude = ["backend/.venv", "frontend"]
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["backend"]
+omit = ["backend/.venv/*", "backend/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:"]
