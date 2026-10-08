@@ -1,5 +1,7 @@
 """Priority ranking and capacity scheduling for cases.
 
+risk = mean of the rule, anomaly, graph and investigation_risk scores (the first three only when
+no investigation_risk table exists). Then
 priority = w_risk*risk + w_dollars*dollars + w_impact*impact + w_severity*severity + w_evidence*evidence
 Risk, dollars and impact are divided by their maximum across cases (0 stays 0); severity and
 evidence are already 0-1. The ranking is a recommendation for human reviewers, never a decision.
@@ -32,7 +34,8 @@ CREATE TABLE cases (
     case_id TEXT PRIMARY KEY, case_type TEXT NOT NULL, primary_entity TEXT NOT NULL,
     entity_ids TEXT NOT NULL, rank INTEGER NOT NULL, priority REAL NOT NULL,
     risk REAL NOT NULL, dollars REAL NOT NULL, impact REAL NOT NULL, severity REAL NOT NULL,
-    evidence REAL NOT NULL, flagged_amount INTEGER NOT NULL, affected_members TEXT NOT NULL,
+    evidence REAL NOT NULL, investigation_risk REAL, investigation_band TEXT, band_source TEXT,
+    flagged_amount INTEGER NOT NULL, affected_members TEXT NOT NULL,
     n_members INTEGER NOT NULL, detectors_fired TEXT NOT NULL, finding_ids TEXT NOT NULL,
     summary TEXT NOT NULL, effort_hours REAL NOT NULL, cumulative_hours REAL NOT NULL,
     queue TEXT NOT NULL CHECK (queue IN ('scheduled', 'backlog')), status TEXT NOT NULL);
@@ -69,10 +72,16 @@ def rank_cases(cases: list[Case], weights: Weights | None = None) -> pd.DataFram
     weights = weights or Weights()
     if not cases:
         return pd.DataFrame()
+    with_investigation = any(c.investigation_risk is not None for c in cases)
+    parts = 4 if with_investigation else 3  # missing risk counts as 0 once the model has run
     df = pd.DataFrame(
         {
             "case_id": [c.case_id for c in cases],
-            "risk_raw": [(c.rule_score + c.anomaly_score + c.graph_score) / 3 for c in cases],
+            "risk_raw": [
+                (c.rule_score + c.anomaly_score + c.graph_score + (c.investigation_risk or 0.0))
+                / parts
+                for c in cases
+            ],
             "dollars_raw": [c.flagged_amount for c in cases],
             "impact_raw": [len(c.affected_members) for c in cases],
             "severity": [SEVERITY_SCORE[c.worst_severity] for c in cases],
@@ -133,7 +142,8 @@ def save_cases(db_path: str | Path, result: RankResult) -> None:
             (
                 c.case_id, c.case_type, c.primary_entity, json.dumps(c.entity_ids), int(r.rank),
                 float(r.priority), float(r.risk), float(r.dollars), float(r.impact),
-                float(r.severity), float(r.evidence), int(c.flagged_amount),
+                float(r.severity), float(r.evidence), c.investigation_risk, c.investigation_band,
+                c.band_source, int(c.flagged_amount),
                 json.dumps(c.affected_members), len(c.affected_members),
                 json.dumps(c.detectors_fired), json.dumps(c.finding_ids), c.summary,
                 float(r.effort_hours), float(r.cumulative_hours), r.queue, STATUS_AWAITING,
@@ -143,7 +153,7 @@ def save_cases(db_path: str | Path, result: RankResult) -> None:
     try:
         con.execute("DROP TABLE IF EXISTS cases")
         con.executescript(CASES_DDL)
-        con.executemany(f"INSERT INTO cases VALUES ({', '.join('?' * 21)})", rows)
+        con.executemany(f"INSERT INTO cases VALUES ({', '.join('?' * 24)})", rows)
         con.commit()
     finally:
         con.close()

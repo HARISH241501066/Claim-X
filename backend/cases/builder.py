@@ -42,6 +42,9 @@ class Case:
     rule_score: float = 0.0
     anomaly_score: float = 0.0
     graph_score: float = 0.0
+    investigation_risk: float | None = None  # model probability; None when not available
+    investigation_band: str | None = None
+    band_source: str | None = None
     worst_severity: str = "low"
     summary: str = ""
     status: str = STATUS_AWAITING
@@ -49,6 +52,21 @@ class Case:
     @property
     def finding_ids(self) -> list[str]:
         return [f["finding_id"] for f in self.findings]
+
+
+def load_investigation_risk(db_path: str | Path) -> dict[str, tuple[float, str, str]]:
+    """provider -> (investigation_risk, band, band_source); empty (and logged) when missing."""
+    con = sqlite3.connect(db_path)
+    try:
+        rows = con.execute(
+            "SELECT provider_id, investigation_risk, risk_band, band_source FROM investigation_risk"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        log.warning("Insufficient data: no investigation_risk table; case risk uses 3 scores")
+        return {}
+    finally:
+        con.close()
+    return {p: (r, b, s) for p, r, b, s in rows}
 
 
 def _providers_for(finding: dict, provider_of: dict[str, str]) -> list[str]:
@@ -135,8 +153,13 @@ def build_cases(db_path: str | Path = DB_PATH) -> list[Case]:
             if f not in case.findings:
                 case.findings.append(f)
 
+    risk_map = load_investigation_risk(db_path)
     ordered = [buckets[k] for k in sorted(buckets, key=lambda k: (k.startswith("PRV-"), k)) if buckets[k].findings]
     for i, case in enumerate(ordered, 1):
         case.case_id = f"CASE-{i:04d}"
         _finish(case, claim_info)
+        scored = [(risk_map[n], n) for n in case.entity_ids if n in risk_map]
+        if scored:  # a ring takes its highest-risk provider
+            (risk, band, source), _ = max(scored, key=lambda t: (t[0][0], t[1]))
+            case.investigation_risk, case.investigation_band, case.band_source = risk, band, source
     return ordered
