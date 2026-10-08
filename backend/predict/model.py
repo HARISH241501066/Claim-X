@@ -23,8 +23,10 @@ from sklearn.metrics import average_precision_score
 from backend.predict.dataset import (
     DATA_END,
     FEATURES,
+    HORIZONS,
     LABELS,
     build_dataset,
+    cutoffs_for,
     features_at,
     load_inputs,
 )
@@ -40,11 +42,13 @@ ESCALATION_MIN_TREND = 1.5  # ... and recent volume at least 1.5x the previous 3
 TOP_DRIVERS = 3
 RISK_TABLE_DDL = """
 CREATE TABLE investigation_risk (
-    provider_id TEXT PRIMARY KEY, as_of TEXT NOT NULL, horizon_days INTEGER NOT NULL,
+    provider_id TEXT NOT NULL, as_of TEXT NOT NULL, horizon_days INTEGER NOT NULL,
     investigation_risk REAL NOT NULL, risk_band TEXT NOT NULL, band_source TEXT NOT NULL,
     band_reason TEXT NOT NULL, low_confidence INTEGER NOT NULL, history_days INTEGER NOT NULL,
-    prior_confirmed_count INTEGER NOT NULL, trend REAL NOT NULL, drivers TEXT NOT NULL);
+    prior_confirmed_count INTEGER NOT NULL, trend REAL NOT NULL, drivers TEXT NOT NULL,
+    PRIMARY KEY (provider_id, horizon_days));
 """
+
 
 
 def make_model() -> GradientBoostingClassifier:
@@ -211,15 +215,29 @@ def score_providers(
 
 @dataclass
 class RiskResult:
+    """`metrics` and `scores` are the default (30-day) window; `by_horizon` holds every window."""
+
+    metrics: dict = field(default_factory=dict)
+    scores: pd.DataFrame = field(default_factory=pd.DataFrame)
+    by_horizon: dict[int, HorizonResult] = field(default_factory=dict)
+
+
+@dataclass
+class HorizonResult:
+    horizon: int
     metrics: dict = field(default_factory=dict)
     scores: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
-def save_scores(db_path: str | Path, scores: pd.DataFrame) -> None:
+def save_scores(db_path: str | Path, scores: pd.DataFrame, replace_all: bool = False) -> None:
+    """Store scores; only the windows present in `scores` are replaced (all of them if asked)."""
     con = sqlite3.connect(db_path)
     try:
-        con.execute("DROP TABLE IF EXISTS investigation_risk")
-        con.executescript(RISK_TABLE_DDL)
+        if replace_all:
+            con.execute("DROP TABLE IF EXISTS investigation_risk")
+        con.executescript(RISK_TABLE_DDL.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS"))
+        for horizon in sorted({int(h) for h in scores.horizon_days}):
+            con.execute("DELETE FROM investigation_risk WHERE horizon_days = ?", (horizon,))
         con.executemany(
             "INSERT INTO investigation_risk VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
@@ -237,37 +255,76 @@ def save_scores(db_path: str | Path, scores: pd.DataFrame) -> None:
         con.close()
 
 
+def run_horizon(
+    dataset: pd.DataFrame,
+    inputs: tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame],
+    horizon: int,
+    as_of: date = DATA_END,
+) -> HorizonResult:
+    """Train, evaluate and score one window. No positive label means no scores, never a guess."""
+    rows = dataset[dataset.cutoff.isin([c.isoformat() for c in cutoffs_for(horizon)])]
+    train, test = split_by_time(rows, horizon)
+    metrics = evaluate(train, test, horizon)
+    everything = usable_rows(rows, horizon)  # the final model uses every observed cutoff
+    label = f"label_{horizon}"
+    if everything.empty or everything[label].sum() == 0:
+        log.warning("Insufficient data: no positive labels for %d days; no risk scores", horizon)
+        return HorizonResult(horizon, {**metrics, "status": "Insufficient data"})
+    model = make_model().fit(everything[FEATURES], everything[label])
+    claims, providers, investigations = inputs
+    features = features_at(claims, providers, investigations, as_of)
+    scores = score_providers(model, features, everything[FEATURES].median(), as_of, horizon)
+    return HorizonResult(horizon, metrics, scores)
+
+
+def run_all(
+    db_path: str | Path = DB_PATH,
+    metrics_path: str | Path | None = METRICS_PATH,
+    horizons: tuple[int, ...] = HORIZONS,
+    as_of: date = DATA_END,
+) -> RiskResult:
+    """One model per window (30, 60, 90 days). metrics.json holds the 30-day numbers at the top
+    (as before) and every window's own held-out numbers under "horizons"."""
+    cutoffs = sorted({c for h in horizons for c in cutoffs_for(h)})
+    dataset = build_dataset(db_path, cutoffs)
+    if dataset.empty:
+        log.warning("Insufficient data: no dataset rows")
+        return RiskResult()
+    inputs = load_inputs(db_path)
+    results = {h: run_horizon(dataset, inputs, h, as_of) for h in horizons}
+    scored = [r.scores for r in results.values() if not r.scores.empty]
+    if scored:
+        save_scores(db_path, pd.concat(scored, ignore_index=True), replace_all=True)
+    default = results.get(DEFAULT_HORIZON) or next(iter(results.values()))
+    metrics = {**default.metrics, "horizons": {str(h): r.metrics for h, r in results.items()}}
+    if metrics_path is not None:
+        Path(metrics_path).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    return RiskResult(metrics=metrics, scores=default.scores, by_horizon=results)
+
+
 def run(
     db_path: str | Path = DB_PATH,
     metrics_path: str | Path | None = METRICS_PATH,
     horizon: int = DEFAULT_HORIZON,
     as_of: date = DATA_END,
 ) -> RiskResult:
-    dataset = build_dataset(db_path)
+    """A single window (the default is 30 days); other windows already stored are kept."""
+    dataset = build_dataset(db_path, cutoffs_for(horizon))
     if dataset.empty:
         log.warning("Insufficient data: no dataset rows")
         return RiskResult()
-    train, test = split_by_time(dataset, horizon)
-    metrics = evaluate(train, test, horizon)
+    result = run_horizon(dataset, load_inputs(db_path), horizon, as_of)
     if metrics_path is not None:
-        Path(metrics_path).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    everything = usable_rows(dataset, horizon)  # final model uses every observed cutoff
-    label = f"label_{horizon}"
-    if everything[label].sum() == 0:
-        log.warning("Insufficient data: no positive labels; no risk scores produced")
-        return RiskResult(metrics=metrics)
-    model = make_model().fit(everything[FEATURES], everything[label])
-    claims, providers, investigations = load_inputs(db_path)
-    features = features_at(claims, providers, investigations, as_of)
-    scores = score_providers(model, features, everything[FEATURES].median(), as_of, horizon)
-    save_scores(db_path, scores)
-    return RiskResult(metrics=metrics, scores=scores)
+        Path(metrics_path).write_text(json.dumps(result.metrics, indent=2), encoding="utf-8")
+    if not result.scores.empty:
+        save_scores(db_path, result.scores)
+    return RiskResult(metrics=result.metrics, scores=result.scores, by_horizon={horizon: result})
 
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    res = run()
+    res = run_all()
     print(json.dumps(res.metrics, indent=2))
     if not res.scores.empty:
         cols = ["provider_id", "investigation_risk", "risk_band", "band_source", "low_confidence"]

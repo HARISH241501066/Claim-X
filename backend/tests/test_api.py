@@ -304,8 +304,10 @@ def test_brief_uses_the_template_without_a_key_and_caches(client):
 def test_brief_horizon_is_validated_and_passed_through(client):
     assert client.get(f"/cases/{RING}/brief", params={"horizon": 0}).status_code == 422
     assert client.get(f"/cases/{RING}/brief", params={"horizon": 400}).status_code == 422
-    other = client.get(f"/cases/{RING}/brief", params={"horizon": 60}).json()
-    assert other["horizon_days"] == 60 and "Insufficient data" in other["brief"]  # only 30 is modelled
+    sixty = client.get(f"/cases/{RING}/brief", params={"horizon": 60}).json()
+    assert sixty["horizon_days"] == 60 and "Insufficient data" not in sixty["brief"]  # 60 days is modelled
+    other = client.get(f"/cases/{RING}/brief", params={"horizon": 120}).json()
+    assert other["horizon_days"] == 120 and "Insufficient data" in other["brief"]  # 30, 60 and 90 only
 
 
 def test_brief_reports_when_the_llm_wrote_it(client, monkeypatch):
@@ -491,7 +493,7 @@ def test_a_failing_stage_is_skipped_and_reported_as_degraded(tmp_path, monkeypat
     def boom(*args, **kwargs):
         raise RuntimeError("model exploded")
 
-    monkeypatch.setattr(pipeline.risk_model, "run", boom)
+    monkeypatch.setattr(pipeline.risk_model, "run_all", boom)
     with caplog.at_level(logging.ERROR, logger="claimshield.pipeline"):
         state = pipeline.run_all(tmp_path / "x.db")
     assert state.status == "degraded"

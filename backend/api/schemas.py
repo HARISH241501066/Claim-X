@@ -134,6 +134,7 @@ class PredictionOut(BaseModel):
     top_drivers: list[str] = []
     history_days: int | None = None
     low_confidence: bool | None = None
+    note: str | None = None  # for example: a longer window that comes out lower than a shorter one
 
 
 class AuditEntry(BaseModel):
@@ -172,7 +173,8 @@ class CaseDetail(BaseModel):
     summary: str
     findings: list[FindingOut]
     timeline: list[TimelineOut]
-    prediction: PredictionOut
+    prediction: PredictionOut  # the 30-day window
+    predictions: dict[str, PredictionOut] = {}  # "30", "60" and "90"
     confidence: dict
     limitations: list[str]
     decisions: list[AuditEntry]

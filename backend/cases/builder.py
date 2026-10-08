@@ -59,7 +59,8 @@ def load_investigation_risk(db_path: str | Path) -> dict[str, tuple[float, str, 
     con = sqlite3.connect(db_path)
     try:
         rows = con.execute(
-            "SELECT provider_id, investigation_risk, risk_band, band_source FROM investigation_risk"
+            "SELECT provider_id, investigation_risk, risk_band, band_source FROM investigation_risk "
+            "WHERE horizon_days = 30"  # case priority and ranking use the 30-day window
         ).fetchall()
     except sqlite3.OperationalError:
         log.warning("Insufficient data: no investigation_risk table; case risk uses 3 scores")

@@ -21,6 +21,11 @@ WINDOW_START = date(2026, 1, 1)
 DATA_END = date(2026, 6, 30)
 CUTOFFS = [date(2026, 2, 28), date(2026, 3, 31), date(2026, 4, 30), date(2026, 5, 31)]  # months 2-5
 HORIZONS = (30, 60, 90)
+# The 30-day model learns from the month-end cutoffs of months 2-5. A longer window needs more of the
+# history to be observed, so the 60- and 90-day models also learn from 31 January (a row with under
+# 60 days of history, flagged low confidence). The 30-day model is left exactly as it was.
+EARLY_CUTOFF = date(2026, 1, 31)
+LONG_HORIZON_CUTOFFS = [EARLY_CUTOFF, *CUTOFFS]
 MIN_HISTORY_DAYS = 60  # below this a row is flagged "Low confidence"
 
 FEATURES = [
@@ -129,11 +134,18 @@ def label_columns(
     return out
 
 
-def build_dataset(db_path: str | Path = DB_PATH) -> pd.DataFrame:
-    """Rows for every provider at every monthly cutoff, with labels for 30/60/90 days."""
+def cutoffs_for(horizon: int) -> list[date]:
+    """The cutoffs a model for this window may learn from."""
+    return list(CUTOFFS) if horizon == 30 else list(LONG_HORIZON_CUTOFFS)
+
+
+def build_dataset(
+    db_path: str | Path = DB_PATH, cutoffs: list[date] | None = None
+) -> pd.DataFrame:
+    """Rows for every provider at every cutoff (default: months 2-5), with labels for 30/60/90 days."""
     claims, providers, investigations = load_inputs(db_path)
     frames = []
-    for cutoff in CUTOFFS:
+    for cutoff in cutoffs or CUTOFFS:
         feats = features_at(claims, providers, investigations, cutoff)
         if feats.empty:
             log.warning("Insufficient data: no claims before cutoff %s", cutoff)

@@ -110,15 +110,18 @@ def build_case_report(
         story.append(para(f"Only the first {ROW_LIMIT} rows of each table are shown.", BULLET))
 
     story.append(para("Investigation risk", H2))
-    p = detail.prediction
-    if p.available:
-        story.append(para(
-            f"{p.horizon_days}-day investigation risk {p.investigation_risk:.1%}, band {p.risk_band} "
-            f"(band source: {p.band_source}). {p.band_reason or ''}"))  # fmt: skip
-        if p.top_drivers:
-            story.append(para("Main drivers: " + "; ".join(p.top_drivers)))
-    else:
-        story.append(para(f"Not available: {p.reason or 'Insufficient data'}."))
+    for key in sorted(detail.predictions or {"30": detail.prediction}, key=int):
+        p = (detail.predictions or {"30": detail.prediction})[key]
+        if p.available:
+            story.append(para(
+                f"{key}-day investigation risk {p.investigation_risk:.1%}, band {p.risk_band} "
+                f"(band source: {p.band_source}). {p.band_reason or ''}"))  # fmt: skip
+            if p.top_drivers:
+                story.append(para("Main drivers: " + "; ".join(p.top_drivers), BULLET))
+            if p.note:
+                story.append(para(p.note, BULLET))
+        else:
+            story.append(para(f"{key}-day investigation risk not available: {p.reason or 'Insufficient data'}."))
     story.append(para(f"Confidence: {detail.confidence.get('level', 'n/a')}. "
                       "This is an estimate to help order the queue, not a finding about any person."))  # fmt: skip
 

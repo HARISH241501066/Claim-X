@@ -306,6 +306,21 @@ def _prediction(con: sqlite3.Connection, providers: list[str], horizon: int) -> 
     }  # fmt: skip
 
 
+def predictions_for(
+    db_path: str | Path, entity_ids: list[str], horizons: tuple[int, ...] = (30, 60, 90)
+) -> dict[int, dict]:
+    """The case's investigation risk for each window, each one 'available' or an Insufficient-data reason."""
+    providers = [e for e in entity_ids if e.startswith("PRV-")]
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        return {h: _prediction(con, providers, h) for h in horizons}
+    except sqlite3.OperationalError:  # no investigation_risk table at all
+        return {h: {"available": False, "reason": "Insufficient data: no investigation_risk table"} for h in horizons}
+    finally:
+        con.close()
+
+
 def _network(con: sqlite3.Connection, case: sqlite3.Row, entities: list[str]) -> dict:
     providers = {r["provider_id"]: r for r in _rows(con, "SELECT * FROM providers")}
     facilities = {r["facility_id"]: r for r in _rows(con, "SELECT * FROM facilities")}
@@ -396,6 +411,14 @@ def build_pack(
 
 
 __all__ = [
-    "CaseNotFoundError", "EvidenceItem", "Pack", "TimelineEntry", "build_pack",
-    "compute_confidence", "compute_limitations", "detector_group", "recommend_action",
+    "CaseNotFoundError",
+    "EvidenceItem",
+    "Pack",
+    "TimelineEntry",
+    "build_pack",
+    "compute_confidence",
+    "compute_limitations",
+    "detector_group",
+    "predictions_for",
+    "recommend_action",
 ]  # fmt: skip

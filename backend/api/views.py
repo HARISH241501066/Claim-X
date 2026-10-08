@@ -32,6 +32,7 @@ from backend.api.schemas import (
     RecommendedAction,
     TimelineOut,
 )
+from backend.brief.evidence import predictions_for
 from backend.cases import ranking
 from backend.cases.builder import SEVERITY_ORDER, Case
 from backend.detect import graph as graph_module
@@ -185,6 +186,27 @@ def build_overview(state: PipelineState, decisions: dict[str, dict]) -> Overview
     )  # fmt: skip
 
 
+def _windows(state: PipelineState, case: Case, thirty: dict) -> dict[str, PredictionOut]:
+    """The 30, 60 and 90-day estimates. Each is the model's own number; when a longer window comes
+    out lower than the one before it, a note says the models are trained separately on little data."""
+    found = predictions_for(state.db_path, case.entity_ids)
+    if thirty.get("available"):
+        found[30] = thirty  # the pack the pipeline built, so the two always agree
+    out: dict[str, PredictionOut] = {}
+    previous: dict | None = None
+    for horizon in sorted(found):
+        item = dict(found[horizon])
+        both = item.get("available") and previous and previous.get("available")
+        if both and item["investigation_risk"] < previous["investigation_risk"]:
+            item["note"] = (
+                f"Lower than the {previous['horizon_days']}-day estimate, although a longer window "
+                "should not be less likely. The windows are separate models trained on little data."
+            )
+        out[str(horizon)] = PredictionOut(**item)
+        previous = item
+    return out
+
+
 def build_case_detail(
     state: PipelineState,
     case: Case,
@@ -201,6 +223,7 @@ def build_case_detail(
     everything = standing.scheduled + standing.backlog
     item = next((i for i in everything if i.case_id == case.case_id), None)
     prediction = pack.prediction if pack else {"available": False, "reason": "Insufficient data"}
+    windows = _windows(state, case, prediction)
     keys = {e.finding_id: e.key for e in pack.evidence} if pack else {}
 
     def order(finding: dict) -> tuple[bool, int]:
@@ -225,7 +248,7 @@ def build_case_detail(
             for f in sorted(case.findings, key=order)
         ],
         timeline=[TimelineOut(**asdict(t)) for t in pack.timeline] if pack else [],
-        prediction=PredictionOut(**prediction),
+        prediction=PredictionOut(**prediction), predictions=windows,
         confidence=pack.confidence if pack else {}, limitations=pack.limitations if pack else [],
         decisions=[AuditEntry(**d) for d in history],
     )  # fmt: skip

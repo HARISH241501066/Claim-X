@@ -140,7 +140,7 @@ def run_all(
         return graph.build_graph(graph.load_graph_tables(db)), result.pairs
 
     graph_out = _stage("graph", graph_stage, timings)
-    metrics = _stage("prediction", lambda: risk_model.run(db, metrics_path).metrics, timings)
+    metrics = _stage("prediction", lambda: risk_model.run_all(db, metrics_path).metrics, timings)
     cases = _stage("cases", lambda: build_cases(db), timings) or []
 
     def ranking_stage() -> pd.DataFrame:
