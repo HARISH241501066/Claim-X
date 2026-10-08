@@ -72,7 +72,7 @@ FIXED_CITY = {
     UPCODER: "Mumbai",
     PHANTOM_PROV: "Delhi",
     OFFENDER: "Bengaluru",
-    HONEST: "Hyderabad",
+    HONEST: "Chennai",
     PHYSIO_PROV: "Mumbai",
     UNBUNDLERS[0]: "Delhi",
     UNBUNDLERS[1]: "Bengaluru",
@@ -573,11 +573,12 @@ def inject_repeat_offender(w: World, rng: random.Random) -> None:
 
 
 def inject_honest_cases(w: World, rng: random.Random) -> None:
-    """A busy honest specialist and genuine same-day follow-ups (different code, same day)."""
+    """A busy honest specialist (high volume, near-typical level mix, large catchment) and
+    genuine same-day follow-ups (different code, same day)."""
     prov = w.prov[HONEST]
     for _ in range(200):
         member = rng.choice(w.members_by_city[prov["city"]])
-        level = rng.choices([1, 2, 3, 4, 5], [0.05, 0.15, 0.35, 0.30, 0.15])[0]
+        level = rng.choices([1, 2, 3, 4, 5], [0.10, 0.20, 0.35, 0.25, 0.10])[0]
         code = ref.consult_code(prov["specialty"], level)
         add_claim(
             w,
