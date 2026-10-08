@@ -44,5 +44,5 @@ See "Demo walkthrough" in the [README](../README.md#demo-walkthrough-about-2-min
 | Login says sign-in is not configured | `JWT_SECRET` (32+ characters) is missing in `.env`. |
 | No users can sign in | `DEMO_PASSWORD` was empty when the audit database was first created. Set it and run `make reset`. |
 | Queue shows decided cases from an old run | Run `make reset`; old decisions live in the archived audit log. |
-| `make reset` says it cannot move the audit database | Stop the API (`make api`) first, then reset. |
+| `make reset` says the API is running | Stop it (Ctrl+C in the `make api` window), then reset again. A running API would keep old decisions in memory. |
 | A brief shows "Template" though an LLM is set | The provider failed or rate-limited; the reason is under the badge. Use System → Prewarm briefs once the limit clears. |

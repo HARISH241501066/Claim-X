@@ -1,6 +1,7 @@
 """make reset: archive the audit log, start clean, prewarm and open the top cases, send no email."""
 
 import os
+import socket
 import sqlite3
 
 import pytest
@@ -83,3 +84,15 @@ def test_reset_explains_what_is_missing_when_sign_in_is_not_set_up(shared, folde
     with pytest.raises(demo_reset.ResetError, match="JWT_SECRET.*DEMO_PASSWORD"):
         run(shared, folders)
     assert not (folders["archive_dir"]).exists()  # nothing was moved before the check
+
+
+def test_reset_refuses_to_run_while_the_api_is_running(folders, capsys):
+    folders["audit_path"].write_bytes(b"")  # something that must not be moved
+    with socket.socket() as listener:  # stands in for a running API
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        assert demo_reset.api_is_running(listener.getsockname()[1]) is True
+        assert demo_reset.main(["--api-port", str(listener.getsockname()[1])]) == 1
+    assert "the API is running" in capsys.readouterr().err
+    assert demo_reset.api_is_running(1) is False  # nothing listens on port 1
+    assert folders["audit_path"].exists() and not folders["archive_dir"].exists()

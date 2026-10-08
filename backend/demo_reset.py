@@ -12,6 +12,7 @@ import argparse
 import logging
 import os
 import shutil
+import socket
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +31,15 @@ ADMIN = "admin"
 
 class ResetError(RuntimeError):
     """The reset could not finish; the message says what to fix."""
+
+
+def api_is_running(port: int = 8000) -> bool:
+    """True if something is already listening on the API port on this machine."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
 
 
 def archive_audit(audit_path: Path, archive_dir: Path = ARCHIVE_DIR) -> Path | None:
@@ -113,8 +123,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Reset the platform to a clean, demo-ready state.")
     parser.add_argument("--top", type=int, default=5, help="how many top cases get a prewarmed brief (1-10)")
     parser.add_argument("--email", action="store_true", help="also send the high-priority emails (real SNS)")
+    parser.add_argument("--api-port", type=int, default=8000, help="the port the API would run on")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    if api_is_running(args.api_port):  # a running API keeps old decisions in memory and would write to the new log
+        print(f"Reset stopped: the API is running on port {args.api_port}. Stop it (Ctrl+C in the make api window) and try again.",
+              file=sys.stderr)  # fmt: skip
+        return 1
     try:
         summary = reset(top=args.top, email=args.email)
     except ResetError as exc:
