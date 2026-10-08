@@ -15,7 +15,9 @@ cp .env.example .env
 |---|---|---|
 | API (http://localhost:8000/health) | `make api` | `.\make.ps1 api` |
 | Web (http://localhost:5173) | `make web` | `.\make.ps1 web` |
-| Tests + lint | `make test` | `.\make.ps1 test` |
+| Backend tests + lint | `make test` | `.\make.ps1 test` |
+| Frontend lint + unit tests | `make web-test` | `.\make.ps1 web-test` |
+| End-to-end run in Chrome (API and web must be running) | `make e2e` | `.\make.ps1 e2e` |
 | Data | `make data` | `.\make.ps1 data` |
 
 ## Using the workbench
