@@ -304,3 +304,12 @@ def test_subgraph_skips_unknown_ids_and_handles_empty_input(world, caplog):
     assert [n["id"] for n in sub["nodes"] if n["type"] == "provider"] == ["PRV-A01"]
     empty = graph.subgraph(world["graph"], [])
     assert empty == {"nodes": [], "links": [], "member_count": 0, "members_collapsed": False}
+
+
+def test_only_communities_with_a_self_referral_link_become_rings(world):
+    result = world["result"]
+    assert result.scores.iloc[1].self_referral is False or not result.scores.iloc[1].self_referral
+    assert not result.scores.iloc[1].self_referral  # runner-up scores 0.5+ but has no ownership link
+    assert result.scores.iloc[1].score >= graph.MIN_RING_SCORE
+    assert [f.entity_id for f in result.findings] == ["RING-01"]
+    assert set(RING) <= set(result.scores.iloc[0].nodes)

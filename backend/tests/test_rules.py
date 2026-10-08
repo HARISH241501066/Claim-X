@@ -13,6 +13,7 @@ from backend.detect.base import Finding, Rule
 from backend.detect.context import Context, load_tables
 from backend.detect.rules.duplicate import DuplicateRule
 from backend.detect.rules.impossible_timing import ImpossibleTimingRule
+from backend.detect.rules.repeat_history import RepeatHistoryRule
 from backend.detect.rules.upcoding import UpcodingRule
 
 RULES_DIR = Path(engine.__file__).resolve().parent / "rules"
@@ -81,7 +82,8 @@ def temp_rule_file(name, source):
 def test_all_rules_were_loaded_and_ran(world):
     assert world["result"].errors == {}
     assert world["result"].rules_run == [
-        "duplicate", "impossible_timing", "phantom", "unbundling", "upcoding", "utilization",
+        "duplicate", "impossible_timing", "phantom", "repeat_history", "unbundling", "upcoding",
+        "utilization",
     ]  # fmt: skip
 
 
@@ -210,7 +212,11 @@ def test_upcoding_reports_insufficient_data_instead_of_guessing(world, caplog):
 
 def test_every_finding_links_to_existing_evidence_and_avoids_accusatory_words(world):
     tables = world["tables"]
-    known = set(tables["claims"].claim_id) | set(tables["inpatient_stays"].stay_id)
+    known = (
+        set(tables["claims"].claim_id)
+        | set(tables["inpatient_stays"].stay_id)
+        | set(tables["investigations"].case_id)
+    )
     assert world["result"].findings
     for f in world["result"].findings:
         assert f.evidence_ids and set(f.evidence_ids) <= known
@@ -256,7 +262,7 @@ def test_dummy_rule_file_is_auto_loaded_with_no_engine_change(world):
         assert "zz_dummy" in [r.name for r in rules]
         result = engine.run_rules(world["tables"]["claims"], world["ctx"])
         assert any(f.detector == "zz_dummy" for f in result.findings)
-        assert len(result.rules_run) == 7
+        assert len(result.rules_run) == 8
     assert "zz_dummy" not in [r.name for r in engine.load_rules()]
 
 
@@ -307,3 +313,46 @@ def test_findings_table_roundtrip_and_run_is_deterministic(world, tmp_path):
     assert engine.load_findings(second) == saved
     engine.run(first)  # re-running replaces the table instead of appending
     assert len(engine.load_findings(first)) == len(saved)
+
+
+# ------------------------------------------------------------ repeat_history
+
+
+def test_repeat_history_flags_the_repeat_offender_only(world):
+    found = by_detector(world, "repeat_history")
+    assert {f.entity_id for f in found} == truth_ids(world, "repeat_offender") == {"PRV-010"}
+    f = found[0]
+    assert f.evidence_ids[0].startswith("CASE-") and f.evidence_ids[1].startswith("CLM-")
+    assert "2.4×" in f.reason and "confirmed investigation" in f.reason
+    assert "PRV-015" not in {x.entity_id for x in found}  # cleared case: honest specialist
+
+
+def history_fixture(world, recent_per_month, outcome="confirmed", closed="2025-09-15"):
+    rows = []
+    for month in range(1, 7):
+        n = 10 if month <= 4 else recent_per_month
+        rows += [
+            claim(len(rows) + 1, member=f"MEM-{i:03d}", day=f"2026-{month:02d}-{(i % 27) + 1:02d}")
+            for i in range(n)
+        ]
+    claims = make_claims(rows)
+    inv = pd.DataFrame(
+        [{"case_id": "CASE-900", "entity_id": "PRV-001", "entity_type": "provider",
+          "opened_date": "2025-06-01", "closed_date": closed, "outcome": outcome}]
+    )  # fmt: skip
+    ctx = Context.build({**world["tables"], "claims": claims, "investigations": inv})
+    return claims, ctx
+
+
+def test_repeat_history_needs_a_confirmed_case_and_a_real_rise(world):
+    rule = RepeatHistoryRule()
+    claims, ctx = history_fixture(world, recent_per_month=20)  # 2.0x
+    assert [f.entity_id for f in rule.evaluate(claims, ctx)] == ["PRV-001"]
+    claims, ctx = history_fixture(world, recent_per_month=14)  # 1.4x, below the threshold
+    assert rule.evaluate(claims, ctx) == []
+    claims, ctx = history_fixture(world, recent_per_month=20, outcome="cleared")
+    assert rule.evaluate(claims, ctx) == []
+    claims, ctx = history_fixture(world, recent_per_month=20, closed="2026-05-20")  # not "past"
+    assert rule.evaluate(claims, ctx) == []
+    claims, ctx = history_fixture(world, recent_per_month=5)  # volume fell
+    assert rule.evaluate(claims, ctx) == []

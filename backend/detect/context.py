@@ -24,7 +24,7 @@ CODE_MINUTES = {
 
 TABLES = [
     "claims", "providers", "facilities", "members", "inpatient_stays", "procedure_codes",
-    "panel_components",
+    "panel_components", "investigations",
 ]  # fmt: skip
 
 
@@ -58,6 +58,7 @@ class Context:
     provider_specialty: dict[str, str]
     facility_coords: dict[str, tuple[float, float]]
     level5: pd.DataFrame  # index provider_id: specialty, n, share
+    investigations: pd.DataFrame = field(default_factory=pd.DataFrame)
     peer_baselines: dict[str, tuple[float, float, int] | None] = field(default_factory=dict)
     util_p95: dict[str, float] = field(default_factory=dict)
 
@@ -89,6 +90,7 @@ class Context:
             provider_specialty=specialty,
             facility_coords=coords,
             level5=level5,
+            investigations=tables.get("investigations", pd.DataFrame()),
         )
         ctx.peer_baselines = {pid: ctx._baseline(pid) for pid in level5.index}
         ctx.util_p95 = ctx._utilization_p95(claims)

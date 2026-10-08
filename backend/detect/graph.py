@@ -316,10 +316,13 @@ def _reason(row: pd.Series, pairs: pd.DataFrame, n_flagged_claims: int) -> str:
 def ring_findings(
     scores: pd.DataFrame, pairs: pd.DataFrame, flagged_ids: dict[int, set[str]]
 ) -> list[Finding]:
+    """Top communities as rings. A ring needs common control: a self-referral link."""
     findings = []
     for row in scores.itertuples():
         if len(findings) >= TOP_COMMUNITIES or row.score < MIN_RING_SCORE:
             break
+        if not row.self_referral:
+            continue
         evidence = sorted(flagged_ids[row.community])
         if not evidence:
             log.info("Insufficient data: community %s has no flagged claims", row.community)
