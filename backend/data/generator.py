@@ -25,6 +25,7 @@ from backend.data import reference as ref
 SEED = 42
 START = date(2026, 1, 1)
 END = date(2026, 6, 30)
+WINDOW = (START, END)
 DB_PATH = Path(__file__).resolve().parents[1] / "claimshield.db"
 TRUTH_PATH = Path(__file__).resolve().parents[1] / "ground_truth.csv"
 
@@ -134,6 +135,18 @@ def haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
     return 6371 * 2 * math.asin(math.sqrt(h))
 
 
+def _free_slot(w: World, member_id: str, provider_id: str, code: str, d: date) -> date:
+    """First date at or after d (else before) not already used by this member/provider/code."""
+    for step in (1, -1):
+        cand = d
+        while WINDOW[0] <= cand <= WINDOW[1]:
+            taken = (member_id, provider_id, code, cand) in w.keys
+            if not taken and (cand == d or not in_stay(w, member_id, cand)):
+                return cand
+            cand += timedelta(days=step)
+    raise RuntimeError(f"no free date for {member_id}/{provider_id}/{code}")
+
+
 def add_claim(
     w: World,
     *,
@@ -148,10 +161,9 @@ def add_claim(
     kind: str = "normal_visit",
     tag: str | None = None,
 ) -> dict:
-    """Append a claim; the billed amount is bumped by Rs 1 until the claim is unique."""
-    while (member_id, provider_id, facility_id, service_date, code, billed) in w.keys:
-        billed += 1
-    w.keys.add((member_id, provider_id, facility_id, service_date, code, billed))
+    """Append a claim; a clash on member, provider, code and date shifts the service date."""
+    service_date = _free_slot(w, member_id, provider_id, code, service_date)
+    w.keys.add((member_id, provider_id, code, service_date))
     w.seq += 1
     claim = {
         "member_id": member_id,
@@ -360,15 +372,19 @@ def build_normal_claims(w: World, rng: random.Random) -> None:
         "DME": ["DME-WC", "DME-BP"],
     }
     ring = set(w.ring_members)
-    for _ in range(N_NORMAL_REFERRALS):
+    made_referrals = 0
+    while made_referrals < N_NORMAL_REFERRALS:
         prov = rng.choice(consult_provs)
         member = rng.choice([m for m in w.members_by_city[prov["city"]] if m not in ring])
-        if rng.random() < 0.08:
+        if prov["city"] == "Chennai" and rng.random() < 0.08:
             fac = w.fac[rng.choice([RING_LAB, RING_CLINIC])]
-        else:
-            fac = rng.choice(other_facs)
+        else:  # members are referred within their own city
+            fac = rng.choice([f for f in other_facs if f["city"] == prov["city"]])
         ref_date = rand_date(rng, START, END - timedelta(days=7))
-        claim_date = free_date(w, rng, member, ref_date, ref_date + timedelta(days=7))
+        try:
+            claim_date = free_date(w, rng, member, ref_date, ref_date + timedelta(days=7))
+        except RuntimeError:  # window falls wholly inside the member's stay; draw again
+            continue
         code = rng.choice(codes_by_type[fac["type"]])
         add_claim(
             w,
@@ -382,6 +398,7 @@ def build_normal_claims(w: World, rng: random.Random) -> None:
             kind="normal_referral",
         )
         add_referral(w, member, prov["provider_id"], fac["facility_id"], ref_date)
+        made_referrals += 1
 
 
 # ---------------------------------------------------------------- planted scenarios

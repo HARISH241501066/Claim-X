@@ -254,3 +254,23 @@ def test_ground_truth_not_used_outside_generator_and_tests():
         if "ground_truth" in path.read_text(encoding="utf-8"):
             offenders.append(str(path))
     assert offenders == []
+
+
+def test_no_accidental_repeats_of_member_provider_code_date(built):
+    groups = q(
+        built,
+        """SELECT COUNT(*) FROM claims GROUP BY member_id, provider_id, procedure_code,
+           service_date HAVING COUNT(*) > 1""",
+    )
+    assert len(groups) == 20  # only the planted double-billing pairs
+
+
+def test_normal_referrals_stay_in_the_members_city(built):
+    far = scalar(
+        built,
+        """SELECT COUNT(*) FROM claims c JOIN members m ON m.member_id = c.member_id
+           JOIN facilities f ON f.facility_id = c.facility_id
+           WHERE c.referring_provider_id IS NOT NULL AND c.provider_id <> 'PRV-A01'
+           AND f.city <> m.city""",
+    )
+    assert far == 0
