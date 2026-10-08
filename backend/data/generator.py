@@ -45,6 +45,7 @@ N_NORMAL_REFERRALS = 420
 RING_ID, RING_LAB, RING_CLINIC = "PRV-A01", "FAC-B01", "FAC-C01"
 UPCODER, PHANTOM_PROV, OFFENDER, HONEST = "PRV-005", "PRV-007", "PRV-010", "PRV-015"
 PHYSIO_PROV, UNBUNDLERS = "PRV-019", ("PRV-024", "PRV-025")
+TIMING_PROV, TIMING_DAY, TIMING_SCANS = "PRV-029", date(2026, 5, 14), 30  # 30 one-hour scans in one day
 OWNER_OPERATORS = ("PRV-003", "PRV-012", "PRV-030")  # own their home facility; honest
 SPECIAL_PROVIDERS = {RING_ID, UPCODER, OFFENDER, HONEST}
 NORMAL_LEVEL_WEIGHTS = [0.15, 0.30, 0.35, 0.15, 0.05]
@@ -619,6 +620,24 @@ def inject_honest_cases(w: World, rng: random.Random) -> None:
             )
 
 
+def inject_impossible_timing(w: World, rng: random.Random) -> None:
+    """One radiology provider bills 30 one-hour MRI scans (30 hours) on a single day."""
+    prov = w.prov[TIMING_PROV]
+    members = [m for m in w.members_by_city[prov["city"]] if not in_stay(w, m, TIMING_DAY)]
+    for member in rng.sample(members, TIMING_SCANS):
+        add_claim(
+            w,
+            member_id=member,
+            provider_id=TIMING_PROV,
+            facility_id=prov["facility_id"],
+            service_date=TIMING_DAY,
+            code="RAD-MRI",
+            billed=noisy(rng, ref.PRICE["RAD-MRI"]),
+            kind="impossible_timing",
+        )
+    w.truth.append((TIMING_PROV, "impossible_timing"))
+
+
 # ---------------------------------------------------------------- investigations / finalize
 
 
@@ -825,6 +844,7 @@ def generate(
     inject_overutilizer(w, rng)
     inject_repeat_offender(w, rng)
     inject_honest_cases(w, rng)
+    inject_impossible_timing(w, random.Random(seed + 2))  # own stream: nothing earlier changes
     build_investigations(w, random.Random(seed + 1))  # own stream: history is simulated
     finalize(w, rng)
     write_db(w, Path(db_path))

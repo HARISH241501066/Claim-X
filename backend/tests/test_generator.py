@@ -226,7 +226,7 @@ def test_ground_truth_file(built):
     assert list(rows[0]) == ["entity_id", "scenario"]
     assert {r["scenario"] for r in rows} == {
         "ring", "upcoder", "double_billing", "unbundling", "phantom", "overutilizer",
-        "repeat_offender", "honest_specialist", "honest_followup",
+        "repeat_offender", "honest_specialist", "honest_followup", "impossible_timing",
     }
     tables = {t for (t,) in q(built, "SELECT name FROM sqlite_master WHERE type='table'")}
     assert not any("truth" in t for t in tables)

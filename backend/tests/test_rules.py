@@ -149,10 +149,17 @@ def test_utilization_flags_the_overutilizing_members(world):
     assert others <= unbundled
 
 
-def test_impossible_timing_is_quiet_on_generated_data(world):
-    # on generated data it may only fire where a planted phantom claim is involved
+def test_impossible_timing_fires_on_the_planted_provider_and_nowhere_else(world):
+    """The planted provider bills 30 one-hour scans in a day; other flags may only come from a
+    planted phantom claim (a member in two distant cities)."""
+    found = by_detector(world, "impossible_timing")
+    planted = [f for f in found if f.entity_id == "PRV-029"]
+    assert len(planted) == 1 and planted[0].severity == "high" and len(planted[0].evidence_ids) == 30
+    assert "30.0 hours" in planted[0].reason and "2026-05-14" in planted[0].reason
     phantom = truth_ids(world, "phantom")
-    assert all(set(f.evidence_ids) & phantom for f in by_detector(world, "impossible_timing"))
+    assert all(set(f.evidence_ids) & phantom for f in found if f.entity_id != "PRV-029")
+    honest = {"PRV-015", "PRV-003", "PRV-012", "PRV-030"}  # busy specialist and owner-operators
+    assert not honest & {f.entity_id for f in found}
 
 
 # ------------------------------------------------------------ rule behaviour on fixtures
