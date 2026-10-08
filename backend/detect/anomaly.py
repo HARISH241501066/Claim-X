@@ -19,7 +19,7 @@ from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 
 from backend.detect.base import Finding
-from backend.detect.engine import FINDINGS_DDL
+from backend.detect.engine import append_findings
 from backend.features.provider_features import FEATURES, build_provider_features
 
 log = logging.getLogger("claimshield.anomaly")
@@ -173,26 +173,10 @@ def save_results(db_path: str | Path, result: AnomalyResult) -> None:
                 for pid, r in result.scores.iterrows()
             ],
         )
-        if con.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='findings'"
-        ).fetchone() is None:
-            con.executescript(FINDINGS_DDL)
-        con.execute("DELETE FROM findings WHERE detector = 'anomaly'")
-        last = con.execute("SELECT MAX(CAST(SUBSTR(finding_id, 5) AS INTEGER)) FROM findings")
-        start = (last.fetchone()[0] or 0) + 1
-        con.executemany(
-            "INSERT INTO findings VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    f"FND-{start + i:06d}", f.entity_id, f.detector, f.score, f.severity,
-                    f.reason, json.dumps(f.evidence_ids),
-                )
-                for i, f in enumerate(result.findings)
-            ],
-        )
         con.commit()
     finally:
         con.close()
+    append_findings(db_path, "anomaly", result.findings)
 
 
 def run(db_path: str | Path = DB_PATH) -> AnomalyResult:

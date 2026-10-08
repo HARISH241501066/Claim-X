@@ -36,10 +36,10 @@ LABELS = {
 
 
 def rule_hit_claims(con: sqlite3.Connection) -> set[str]:
-    """Claim IDs that any rule finding cites as evidence (anomaly findings are excluded)."""
+    """Claim IDs that any rule finding cites as evidence (model and graph findings are excluded)."""
     try:
         rows = con.execute(
-            "SELECT evidence_ids FROM findings WHERE detector <> 'anomaly'"
+            "SELECT evidence_ids FROM findings WHERE detector NOT IN ('anomaly', 'ring')"
         ).fetchall()
     except sqlite3.OperationalError:
         log.warning("Insufficient data: no findings table yet; rule_hits_per_100 set to 0")

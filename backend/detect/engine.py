@@ -99,6 +99,33 @@ def save_findings(db_path: str | Path, findings: list[Finding]) -> None:
         con.close()
 
 
+def append_findings(db_path: str | Path, detector: str, findings: list[Finding]) -> None:
+    """Replace this detector's findings in the table, keeping every other detector's rows."""
+    con = sqlite3.connect(db_path)
+    try:
+        exists = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='findings'"
+        ).fetchone()
+        if exists is None:
+            con.executescript(FINDINGS_DDL)
+        con.execute("DELETE FROM findings WHERE detector = ?", (detector,))
+        last = con.execute("SELECT MAX(CAST(SUBSTR(finding_id, 5) AS INTEGER)) FROM findings")
+        start = (last.fetchone()[0] or 0) + 1
+        con.executemany(
+            "INSERT INTO findings VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    f"FND-{start + i:06d}", f.entity_id, f.detector, f.score, f.severity,
+                    f.reason, json.dumps(f.evidence_ids),
+                )
+                for i, f in enumerate(findings)
+            ],
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
 def load_findings(db_path: str | Path) -> list[dict]:
     con = sqlite3.connect(db_path)
     try:
