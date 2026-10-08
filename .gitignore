@@ -8,3 +8,4 @@ __pycache__/
 dist/
 backend/ground_truth.csv
 backend/metrics.json
+backend/*.metrics.json

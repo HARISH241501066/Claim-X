@@ -809,8 +809,9 @@ def write_truth(w: World, truth_path: Path) -> None:
 
 
 def generate(
-    db_path: Path = DB_PATH, truth_path: Path = TRUTH_PATH, seed: int = SEED
+    db_path: Path = DB_PATH, truth_path: Path | None = TRUTH_PATH, seed: int = SEED
 ) -> dict[str, int]:
+    """Build the database; truth_path=None skips the test-only ground truth file."""
     rng = random.Random(seed)
     w = World()
     build_entities(w, rng)
@@ -827,7 +828,8 @@ def generate(
     build_investigations(w, random.Random(seed + 1))  # own stream: history is simulated
     finalize(w, rng)
     write_db(w, Path(db_path))
-    write_truth(w, Path(truth_path))
+    if truth_path is not None:
+        write_truth(w, Path(truth_path))
     return {
         "providers": len(w.providers),
         "facilities": len(w.facilities),

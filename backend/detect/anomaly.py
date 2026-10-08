@@ -179,8 +179,9 @@ def save_results(db_path: str | Path, result: AnomalyResult) -> None:
     append_findings(db_path, "anomaly", result.findings)
 
 
-def run(db_path: str | Path = DB_PATH) -> AnomalyResult:
-    features = build_provider_features(db_path)  # reads current rule findings as one feature
+def run(db_path: str | Path = DB_PATH, features: pd.DataFrame | None = None) -> AnomalyResult:
+    if features is None:  # the pipeline passes features it has already built
+        features = build_provider_features(db_path)  # reads current rule findings as one feature
     con = sqlite3.connect(db_path)
     try:
         claims = pd.read_sql_query("SELECT claim_id, provider_id FROM claims", con)
