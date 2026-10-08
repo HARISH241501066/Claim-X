@@ -205,8 +205,29 @@ class BriefOut(BaseModel):
     provider: str | None = None  # who wrote it: anthropic, xai or groq; null for the template
     provider_label: str = "Template"  # what the screen shows: Claude, Grok, Groq or Template
     masked: bool = False  # True when an LLM wrote it from masked data
-    cached: bool = False
+    cached: bool = False  # True when stored text for unchanged evidence was reused
+    attempts: int = 0  # LLM calls this request made (0 when cached or written by the template)
     brief: str
+
+
+class PrewarmItem(BaseModel):
+    rank: int
+    case_id: str
+    source: Literal["llm", "template"]
+    provider_label: str
+    cached: bool
+    attempts: int
+    fallback_reason: str | None = None
+
+
+class PrewarmOut(BaseModel):
+    requested: int
+    generated: int  # written by an LLM in this run
+    already_cached: int  # LLM briefs that needed no call
+    fell_back: int  # the template was used
+    llm_calls: int
+    seconds: float
+    items: list[PrewarmItem]
 
 
 Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=2000)]

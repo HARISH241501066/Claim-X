@@ -83,7 +83,7 @@ describe('Brief', () => {
 
   it('shows the Template badge, with the reason, and no masked-data note', () => {
     render(<Brief brief={briefData({ fallback_reason: 'LLM_PROVIDER is none' })} validKeys={keys} onCite={vi.fn()} />)
-    expect(screen.getByTestId('brief-source')).toHaveTextContent('Source: Template')
+    expect(screen.getByTestId('brief-source')).toHaveTextContent(/^Template$/)
     expect(screen.getByText(/LLM_PROVIDER is none/)).toBeInTheDocument()
     expect(screen.queryByTestId('masked-note')).toBeNull()
   })
@@ -101,12 +101,30 @@ describe('Brief', () => {
       />,
     )
     const badge = screen.getByTestId('brief-source')
-    expect(badge).toHaveTextContent(`Source: ${label}`)
+    expect(badge).toHaveTextContent(new RegExp(`^${label}$`))
     expect(badge).toHaveAttribute('title', `Model: ${model}`)
     expect(screen.getByTestId('masked-note')).toHaveTextContent(
       'Generated from masked data. No personal details were shared.',
     )
     expect(screen.getByText(/Checked against the evidence/)).toBeInTheDocument()
+  })
+})
+
+describe('Brief badge', () => {
+  const show = (over) =>
+    render(<Brief brief={briefData({ source: 'llm', provider: 'groq', provider_label: 'Groq', model: 'm', masked: true, fallback_reason: null, ...over })} validKeys={new Set()} onCite={vi.fn()} />)
+
+  it('says "Groq (cached)" when stored text was reused and "Groq" when freshly written', () => {
+    const { unmount } = show({ cached: true })
+    expect(screen.getByTestId('brief-source')).toHaveTextContent(/^Groq \(cached\)$/)
+    unmount()
+    show({ cached: false })
+    expect(screen.getByTestId('brief-source')).toHaveTextContent(/^Groq$/)
+  })
+
+  it('never adds "(cached)" to a template brief', () => {
+    render(<Brief brief={briefData({ cached: true })} validKeys={new Set()} onCite={vi.fn()} />)
+    expect(screen.getByTestId('brief-source')).toHaveTextContent(/^Template$/)
   })
 })
 

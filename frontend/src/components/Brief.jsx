@@ -135,17 +135,19 @@ function renderBody(text, validKeys, onCite) {
 /** The investigation brief with clickable [E#] citations and who wrote it. */
 export default function Brief({ brief, validKeys, onCite }) {
   const fromLlm = brief.source === 'llm'
-  // The badge names who really wrote it: Claude, Grok, Groq or the built-in Template.
-  const label = fromLlm ? (brief.provider_label ?? 'LLM') : 'Template'
+  // The badge names who really wrote it (Claude, Grok, Groq or the built-in Template) and says
+  // when the stored text for unchanged evidence was reused instead of asking the provider again.
+  const label = fromLlm ? `${brief.provider_label ?? 'LLM'}${brief.cached ? ' (cached)' : ''}` : 'Template'
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted">Source</span>
         <Badge
           tone={fromLlm ? 'accent' : 'neutral'}
           title={fromLlm && brief.model ? `Model: ${brief.model}` : undefined}
           data-testid="brief-source"
         >
-          Source: {label}
+          {label}
         </Badge>
         {!fromLlm && brief.fallback_reason && (
           <span className="text-xs text-muted">Written by the built-in template: {brief.fallback_reason}.</span>

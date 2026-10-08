@@ -394,8 +394,10 @@ def test_llm_requests_holds_field_names_and_token_counts_only(shared, pack, audi
     ask(shared, ChatLike(reply=masked_reply(pack, lambda t: t.replace("[E1]", "[E99]", 1))), GROQ, audit=audit)
     ask(shared, ChatLike(exc=RuntimeError("secret detail PRV-A01")), GROK, audit=audit)
     rows = audit.list_llm_requests()
-    assert [r["outcome"] for r in rows] == ["error", "validation_failed", "llm_ok"]
-    ok = rows[2]
+    # newest first; the invalid reply was retried once (attempts 1 and 2), then the template was used
+    assert [r["outcome"] for r in rows] == ["error", "validation_failed", "validation_failed", "llm_ok"]
+    assert [r["attempt"] for r in rows] == [1, 2, 1, 1]
+    ok = rows[3]
     assert ok["provider"] == "anthropic" and ok["model"] == "claude-opus-5-5"
     assert ok["tokens_by_kind"] == {"PERSON": 3, "ORG": 2}
     assert ok["dropped_fields"] == [] and (ok["input_tokens"], ok["output_tokens"]) == (321, 123)
@@ -415,7 +417,7 @@ def test_llm_requests_holds_field_names_and_token_counts_only(shared, pack, audi
         con.close()
     assert columns == {
         "request_id", "ts", "case_id", "provider", "model", "outcome", "tokens_by_kind",
-        "dropped_fields", "input_tokens", "output_tokens", "detail",
+        "dropped_fields", "input_tokens", "output_tokens", "detail", "attempt",
     }  # no column could hold a prompt, a reply, a vault or a real value
 
 
@@ -532,3 +534,308 @@ def test_the_api_reports_which_provider_wrote_the_brief_and_logs_the_request(api
     assert len(rows) == 1 and rows[0]["outcome"] == "llm_ok" and rows[0]["provider"] == provider
     again = client.get(f"/cases/{RING}/brief").json()  # cached: no second request
     assert again["cached"] is True and len(app.state.runtime.audit.list_llm_requests()) == 1
+
+
+# ------------------------------------------------------------ retries, stored briefs and prewarm
+
+
+class RateLimited(Exception):
+    """Looks like a provider's 429: status 429 and an optional Retry-After header."""
+
+    status_code = 429
+
+    def __init__(self, retry_after=None):
+        super().__init__("rate limit reached for PRV-A01")  # the message must never be logged
+        self.response = SimpleNamespace(headers={"retry-after": str(retry_after)} if retry_after else {})
+
+
+class Unauthorized(Exception):
+    status_code = 401
+
+
+class TimedOut(Exception):
+    pass
+
+
+TimedOut.__name__ = "APITimeoutError"  # how the openai and anthropic packages name their timeout
+
+
+class Scripted(ChatLike):
+    """Plays a script: each call raises the next exception or returns the next reply."""
+
+    def __init__(self, *outcomes):
+        super().__init__()
+        self.outcomes = list(outcomes)
+
+    def create(self, **kwargs):
+        outcome = self.outcomes.pop(0)
+        self.exc, self.reply = (outcome, "") if isinstance(outcome, Exception) else (None, outcome)
+        return super().create(**kwargs)
+
+
+@pytest.fixture
+def sleeps(monkeypatch):
+    waited = []
+    monkeypatch.setattr(generate.time, "sleep", waited.append)
+    return waited
+
+
+def run(shared, client, audit, cache=True, **kw):
+    return generate.generate_brief(
+        RING, db_path=shared.db_path, client=client, env=GROQ, record=recorder(audit),
+        cache=audit if cache else None, **kw,
+    )
+
+
+def bad_reply(pack):
+    return masked_reply(pack, lambda t: t.replace("[E1]", "[E99]", 1))
+
+
+def test_a_429_then_success_makes_exactly_one_retry_after_three_seconds(shared, pack, audit, sleeps):
+    client = Scripted(RateLimited(), masked_reply(pack))
+    brief = run(shared, client, audit)
+    assert brief.source == "llm" and brief.attempts == 2 and len(client.calls) == 2
+    assert sleeps == [3.0]
+    rows = audit.list_llm_requests()
+    assert [(r["attempt"], r["outcome"]) for r in rows] == [(2, "llm_ok"), (1, "error")]
+    assert rows[1]["detail"] == "RateLimited (429)"  # class and status only, never the message
+
+
+def test_a_timeout_waits_three_seconds_and_retries_once(shared, pack, audit, sleeps):
+    client = Scripted(TimedOut(), masked_reply(pack))
+    assert run(shared, client, audit).source == "llm" and sleeps == [3.0]
+
+
+def test_the_provider_retry_after_is_honoured_within_the_cap_and_not_beyond(shared, pack, audit, sleeps):
+    longer = Scripted(RateLimited(retry_after=20), masked_reply(pack))
+    assert run(shared, longer, audit, wait_cap=45).source == "llm" and sleeps == [20.0]
+    sleeps.clear()
+    too_long = Scripted(RateLimited(retry_after=20), masked_reply(pack))
+    brief = run(shared, too_long, audit, cache=False)  # the page cap is 8 seconds
+    assert brief.source == "template" and brief.retryable and len(too_long.calls) == 1 and not sleeps
+
+
+def test_a_second_429_or_timeout_gives_the_template_without_a_third_call(shared, pack, audit, sleeps):
+    client = Scripted(RateLimited(), RateLimited(), masked_reply(pack))
+    brief = run(shared, client, audit)
+    assert brief.source == "template" and len(client.calls) == 2 and sleeps == [3.0]
+    assert brief.retryable and "RateLimited (429)" in brief.fallback_reason
+
+
+def test_other_errors_are_not_retried(shared, pack, audit, sleeps):
+    client = Scripted(Unauthorized(), masked_reply(pack))
+    assert run(shared, client, audit).source == "template"
+    assert len(client.calls) == 1 and not sleeps
+
+
+def test_an_invalid_reply_then_a_valid_one_is_accepted_on_the_retry(shared, pack, audit, sleeps):
+    client = Scripted(bad_reply(pack), masked_reply(pack))
+    brief = run(shared, client, audit)
+    assert brief.source == "llm" and brief.attempts == 2 and not sleeps  # no pause for validation
+    first, second = (c["messages"][-1]["content"] for c in client.calls)
+    assert "rejected by the validator" not in first
+    assert "rejected by the validator" in second and "E99" in second  # the validator's message
+    assert second.startswith(first)  # same masked payload, with the feedback appended
+    assert not IDENTIFIER.findall(client.sent)
+    assert [(r["attempt"], r["outcome"]) for r in audit.list_llm_requests()] == [
+        (2, "llm_ok"), (1, "validation_failed")]  # fmt: skip
+
+
+def test_two_invalid_replies_give_the_template(shared, pack, audit, sleeps):
+    client = Scripted(bad_reply(pack), bad_reply(pack), masked_reply(pack))
+    brief = run(shared, client, audit)
+    assert brief.source == "template" and len(client.calls) == 2 and "rejected" in brief.fallback_reason
+
+
+def test_no_brief_ever_makes_more_than_three_llm_calls(shared, pack, audit, sleeps):
+    ok = Scripted(RateLimited(), bad_reply(pack), masked_reply(pack))
+    assert run(shared, ok, audit).source == "llm" and len(ok.calls) == 3
+    never = Scripted(RateLimited(), bad_reply(pack), bad_reply(pack), masked_reply(pack))
+    brief = run(shared, never, audit, cache=False)
+    assert brief.source == "template" and len(never.calls) == 3
+
+
+def test_an_identifier_in_the_retry_prompt_blocks_the_retry(shared, pack, audit, sleeps, monkeypatch):
+    monkeypatch.setattr(generate, "validate_brief", lambda text, p: ["bad mention of PRV-A01"])
+    client = Scripted(masked_reply(pack), masked_reply(pack))
+    brief = run(shared, client, audit)
+    assert brief.source == "template" and len(client.calls) == 1
+    assert "leak_blocked" in [r["outcome"] for r in audit.list_llm_requests()]
+    assert not IDENTIFIER.findall(client.sent)
+
+
+def test_a_stored_brief_means_no_llm_call_and_the_same_text(shared, pack, audit):
+    first = run(shared, Scripted(masked_reply(pack)), audit)
+    silent = Scripted()  # any call would fail: the script is empty
+    again = run(shared, silent, audit)
+    assert again.source == "llm" and again.cached is True and again.attempts == 0 and not silent.calls
+    assert again.text == first.text and "PRV-A01" in again.text  # names restored from placeholders
+    assert len(audit.list_llm_requests()) == 1  # a hit logs no LLM request
+
+
+def test_the_stored_brief_holds_placeholders_only_and_one_row_per_case_and_provider(shared, pack, audit):
+    run(shared, Scripted(masked_reply(pack)), audit)
+    stored = audit.list_cached_briefs()
+    assert len(stored) == 1 and stored[0]["provider"] == "groq" and stored[0]["horizon"] == 30
+    blob = json.dumps(stored)
+    assert not IDENTIFIER.findall(blob) and "PERSON_1" in blob
+
+
+def test_changed_evidence_or_instructions_regenerate_the_brief(shared, pack, audit, monkeypatch):
+    run(shared, Scripted(masked_reply(pack)), audit)
+    monkeypatch.setattr(generate, "SYSTEM_PROMPT", generate.SYSTEM_PROMPT + " Extra rule.")
+    fresh = Scripted(masked_reply(pack))
+    brief = run(shared, fresh, audit)
+    assert brief.cached is False and len(fresh.calls) == 1
+    assert len(audit.list_cached_briefs()) == 1  # the older entry for this case was replaced
+
+
+def test_each_provider_keeps_its_own_stored_brief(shared, pack, audit):
+    run(shared, Scripted(masked_reply(pack)), audit)
+    other = generate.generate_brief(
+        RING, db_path=shared.db_path, client=ClaudeLike(reply=masked_reply(pack)), env=CLAUDE,
+        cache=audit, record=recorder(audit),
+    )
+    assert other.cached is False and other.provider == "anthropic"
+    assert sorted(r["provider"] for r in audit.list_cached_briefs()) == ["anthropic", "groq"]
+
+
+def test_template_briefs_are_not_stored(shared, pack, audit, sleeps):
+    run(shared, Scripted(Unauthorized()), audit)
+    assert audit.list_cached_briefs() == []
+
+
+def test_a_damaged_stored_brief_is_ignored(shared, pack, audit):
+    run(shared, Scripted(masked_reply(pack)), audit)
+    con = sqlite3.connect(audit.path)
+    try:
+        with con:
+            con.execute("UPDATE brief_cache SET masked_text = 'garbage'")
+    finally:
+        con.close()
+    again = Scripted(masked_reply(pack))
+    assert run(shared, again, audit).cached is False and len(again.calls) == 1
+
+
+def test_an_audit_file_made_before_the_attempt_column_is_upgraded_in_place(tmp_path):
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    with con:
+        con.execute(
+            "CREATE TABLE llm_requests (request_id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
+            " case_id TEXT, provider TEXT NOT NULL, model TEXT, outcome TEXT NOT NULL,"
+            " tokens_by_kind TEXT NOT NULL, dropped_fields TEXT NOT NULL, input_tokens INTEGER,"
+            " output_tokens INTEGER, detail TEXT)"
+        )
+        con.execute("INSERT INTO llm_requests (ts, case_id, provider, model, outcome, tokens_by_kind,"
+                    " dropped_fields) VALUES ('2026-01-01T00:00:00Z', 'CASE-0001', 'groq', 'm',"
+                    " 'llm_ok', '{}', '[]')")  # fmt: skip
+    con.close()
+    log = AuditLog(path)
+    rows = log.list_llm_requests()
+    assert len(rows) == 1 and rows[0]["attempt"] == 1
+    log.record_llm_request(case_id=RING, provider="groq", model="m", outcome="llm_ok",
+                           audit={"tokens_by_kind": {}, "dropped_fields": []}, attempt=2)  # fmt: skip
+    assert [r["attempt"] for r in log.list_llm_requests()] == [2, 1]
+
+
+class PerCase(ChatLike):
+    """Answers each case with its own masked template, like a model that follows the rules."""
+
+    def __init__(self, db_path, fail_first=0):
+        super().__init__()
+        self.db_path, self.fail_first = db_path, fail_first
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        prompt = kwargs["messages"][-1]["content"]
+        case = re.search(r"CASE-\d{4}", prompt).group(0)
+        text = masked_reply(build_pack(case, db_path=self.db_path))
+        choice = SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=text))
+        return SimpleNamespace(choices=[choice], usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1))
+
+
+@pytest.fixture
+def groq_api(api, shared, monkeypatch, sleeps):
+    client, app = api
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    fake = PerCase(shared.db_path)
+    monkeypatch.setattr(generate, "make_client", lambda p, key: fake)
+    return client, app, fake
+
+
+def top_cases(client, n=5):
+    q = client.get("/queue").json()
+    return [i["case_id"] for i in sorted(q["scheduled"] + q["backlog"], key=lambda i: i["rank"])][:n]
+
+
+def test_prewarm_fills_the_top_five_cases_in_queue_order_with_a_pause_between_calls(groq_api, sleeps):
+    client, app, fake = groq_api
+    body = client.post("/admin/prewarm-briefs?top=5").json()
+    assert [i["case_id"] for i in body["items"]] == top_cases(client)
+    assert [i["rank"] for i in body["items"]] == sorted(i["rank"] for i in body["items"])
+    assert body["generated"] == 5 and body["fell_back"] == 0 and body["llm_calls"] == 5
+    assert len(fake.calls) == 5 and sleeps == [2.0] * 4  # 2 s between calls, none after the last
+    assert len(app.state.runtime.audit.list_cached_briefs()) == 5
+
+
+def test_reloading_the_prewarmed_cases_makes_no_llm_calls(groq_api):
+    client, app, fake = groq_api
+    client.post("/admin/prewarm-briefs?top=5")
+    calls = len(fake.calls)
+    for case in top_cases(client):
+        body = client.get(f"/cases/{case}/brief").json()
+        assert body["source"] == "llm" and body["cached"] is True and body["provider_label"] == "Groq"
+    assert len(fake.calls) == calls
+    assert len(app.state.runtime.audit.list_llm_requests()) == calls
+
+
+def test_stored_briefs_survive_a_restart_and_a_second_prewarm_calls_nothing(groq_api, shared, tmp_path, sleeps):
+    client, _app, fake = groq_api
+    client.post("/admin/prewarm-briefs?top=5")
+    calls = len(fake.calls)
+    sleeps.clear()
+    restarted = create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db", runner=lambda path: shared)
+    with TestClient(restarted) as fresh:
+        body = fresh.post("/admin/prewarm-briefs?top=5").json()
+        assert body["generated"] == 0 and body["already_cached"] == 5 and body["llm_calls"] == 0
+        assert fresh.get(f"/cases/{top_cases(fresh)[0]}/brief").json()["cached"] is True
+    assert len(fake.calls) == calls and not sleeps  # nothing reached the provider, so no pauses
+
+
+def test_prewarm_limits_and_the_template_only_case(api, sleeps):
+    client, _app = api  # no provider set
+    assert client.post("/admin/prewarm-briefs?top=0").status_code == 422
+    assert client.post("/admin/prewarm-briefs?top=11").status_code == 422
+    body = client.post("/admin/prewarm-briefs?top=3").json()
+    assert body["requested"] == 3 and len(body["items"]) == 3 and body["fell_back"] == 3
+    assert body["llm_calls"] == 0 and not sleeps
+
+
+def test_a_prewarm_already_running_is_refused(api):
+    client, app = api
+    app.state.runtime.prewarm_lock.acquire()
+    try:
+        assert client.post("/admin/prewarm-briefs").status_code == 409
+    finally:
+        app.state.runtime.prewarm_lock.release()
+
+
+def test_prewarm_retries_a_case_whose_earlier_attempt_failed(groq_api, monkeypatch):
+    client, _app, fake = groq_api
+    real = fake.create
+    state = {"fail": True}
+
+    def flaky(**kwargs):
+        if state["fail"]:
+            state["fail"] = False
+            fake.calls.append(kwargs)
+            raise Unauthorized()
+        return real(**kwargs)
+
+    fake.create = flaky
+    first = top_cases(client)[0]
+    assert client.get(f"/cases/{first}/brief").json()["source"] == "template"  # now cached for 60 s
+    body = client.post("/admin/prewarm-briefs?top=1").json()
+    assert body["items"][0]["source"] == "llm" and body["generated"] == 1  # did not wait out the minute

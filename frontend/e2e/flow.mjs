@@ -130,7 +130,9 @@ try {
   await page.waitForSelector('[data-testid=brief-body]')
   const sourceText = await page.textContent('[data-testid=brief-source]')
   const expected = process.env.EXPECT_SOURCE ?? 'Template' // Template, Claude, Grok or Groq
-  check(`brief shows the real source badge "${expected}"`, sourceText.trim() === `Source: ${expected}`, sourceText.trim())
+  // a provider's brief may say "(cached)" when the stored text for unchanged evidence was reused
+  const badge = sourceText.trim()
+  check(`brief shows the real source badge "${expected}"`, badge === expected || (expected !== 'Template' && badge === `${expected} (cached)`), badge)
   const maskedNote = await page.locator('[data-testid=masked-note]').count()
   check(expected === 'Template' ? 'a template brief has no masked-data note' : 'an LLM brief says it was generated from masked data',
     expected === 'Template' ? maskedNote === 0 : (await page.textContent('[data-testid=masked-note]')).trim() === 'Generated from masked data. No personal details were shared.')

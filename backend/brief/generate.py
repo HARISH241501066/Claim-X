@@ -10,11 +10,13 @@ is only handed to the provider's client; it is never logged or returned.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
 import sys
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,7 +26,7 @@ import anthropic
 import openai
 
 from backend.brief.evidence import DB_PATH, DEFAULT_HORIZON, Pack, build_pack
-from backend.brief.llm_payload import prepare, unknown_placeholders
+from backend.brief.llm_payload import IDENTIFIER, prepare, unknown_placeholders
 from backend.brief.masker import LeakError, Vault, audit_record, unmask_text
 from backend.brief.template import FINAL_LINE, SECTIONS, render_template
 from backend.brief.validator import validate_brief
@@ -33,6 +35,9 @@ log = logging.getLogger("claimshield.brief")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MAX_TOKENS = 8000
 REQUEST_TIMEOUT_SECONDS = 15.0
+RETRY_PAUSE_SECONDS = 3.0  # the shortest wait before the one retry of a 429 or a timeout
+INTERACTIVE_WAIT_CAP = 8.0  # a person is waiting on the page: do not stall longer than this
+PREWARM_WAIT_CAP = 45.0  # a background run can wait out a provider's rate-limit window
 MASKED_NOTE = "Generated from masked data. No personal details were shared."
 
 
@@ -100,6 +105,8 @@ class Brief:
     provider: str | None = None  # anthropic | xai | groq, only when an LLM wrote it
     masked: bool = False  # True when an LLM wrote it from masked data
     retryable: bool = False  # True when an LLM was tried and failed, so asking again may succeed
+    cached: bool = False  # True when the stored brief for unchanged evidence was reused
+    attempts: int = 0  # how many LLM calls this request made (0 for a cache hit or a template)
 
 
 @dataclass
@@ -194,6 +201,34 @@ def _describe(exc: Exception) -> str:
     return f"{type(exc).__name__}" + (f" ({status})" if status else "")
 
 
+def _is_timeout(exc: Exception) -> bool:
+    return isinstance(exc, TimeoutError) or type(exc).__name__ == "APITimeoutError"
+
+
+def retry_wait(exc: Exception, cap: float) -> float | None:
+    """Seconds to wait before the single retry, or None when this failure is not worth retrying.
+    A timeout waits a flat pause. A 429 waits for the provider's Retry-After if that is longer.
+    A wait beyond `cap` is not taken: the template is used now and the next request tries again."""
+    if _is_timeout(exc):
+        return RETRY_PAUSE_SECONDS
+    if getattr(exc, "status_code", None) != 429:
+        return None
+    wait = RETRY_PAUSE_SECONDS
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    try:
+        wait = max(wait, float(headers.get("retry-after"))) if headers else wait
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return wait if wait <= cap else None
+
+
+def pack_hash(masked: dict) -> str:
+    """Identifies the evidence as the LLM sees it (masked, so no real value is in it) plus the
+    instructions, so a change to either one regenerates the brief."""
+    canonical = json.dumps(masked, sort_keys=True, ensure_ascii=False) + SYSTEM_PROMPT
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def generate_brief(
     case_id: str,
     horizon: int = DEFAULT_HORIZON,
@@ -201,8 +236,13 @@ def generate_brief(
     client: Any = None,
     env: Mapping[str, str] | None = None,
     record: Callable[[dict], None] | None = None,
+    cache: Any = None,
+    wait_cap: float = INTERACTIVE_WAIT_CAP,
 ) -> Brief:
-    """The brief for a case. `record` receives one dict per LLM attempt (no real values in it)."""
+    """The brief for a case. `record` receives one dict per LLM attempt (no real values in it).
+    `cache` (an AuditLog) stores accepted briefs so unchanged evidence needs no new LLM call.
+    A 429 or timeout is retried once; a reply that fails validation is retried once with the
+    validator's message added to the prompt; after that the template is used."""
     pack = build_pack(case_id, horizon, db_path)
     template = render_template(pack)
 
@@ -221,7 +261,9 @@ def generate_brief(
         return use_template("no LLM_API_KEY is set")
     model = resolve_setting("LLM_MODEL", env) or provider.default_model
 
-    def log_request(outcome: str, vault: Vault, detail: str | None, reply: LLMReply | None = None):
+    def log_request(
+        outcome: str, vault: Vault, detail: str | None, reply: LLMReply | None = None, attempt: int = 1
+    ):
         if record is None:
             return
         try:
@@ -231,6 +273,7 @@ def generate_brief(
                     "outcome": outcome, "audit": audit_record(vault, provider.key),
                     "input_tokens": reply.input_tokens if reply else None,
                     "output_tokens": reply.output_tokens if reply else None, "detail": detail,
+                    "attempt": attempt,
                 }
             )  # fmt: skip
         except Exception:  # noqa: BLE001 - a logging problem must not break the brief
@@ -243,24 +286,77 @@ def generate_brief(
         log_request("leak_blocked", getattr(exc, "vault", Vault()), str(exc))
         return use_template(f"blocked before sending: {exc}", retryable=True)
 
-    try:
-        reply = call_llm(client or make_client(provider, key), provider, model, build_prompt(masked, pack))
-    except Exception as exc:  # noqa: BLE001 - fail safely: any LLM problem returns the template
-        detail = f"unusable reply: {exc}" if isinstance(exc, LLMUnusableError) else _describe(exc)
-        log.warning("LLM call for %s failed: %s", case_id, detail)
-        log_request("error", vault, detail)
-        return use_template(f"LLM call failed: {detail}", retryable=True)
+    digest = pack_hash(masked)
+    if cache is not None:
+        try:
+            hit = cache.get_cached_brief(case_id, horizon, provider.key, digest)
+        except Exception:  # noqa: BLE001 - a cache problem just means asking the LLM
+            hit = None
+        if hit:
+            text = unmask_text(hit["masked_text"], vault)
+            if not validate_brief(text, pack):  # stale or damaged entries are ignored, not served
+                return Brief(case_id, text.rstrip() + "\n", "llm", None, hit["model"],
+                             provider.key, True, cached=True)  # fmt: skip
 
-    # Validate the reply while it is still masked, then restore the identifiers for display.
-    problems = validate_brief(reply.text, pack)
-    problems += [f"unknown placeholder {t}" for t in unknown_placeholders(reply.text, vault)]
-    text = unmask_text(reply.text, vault) if not problems else ""
-    problems += validate_brief(text, pack) if text else []
-    if problems:
-        log_request("validation_failed", vault, "; ".join(problems), reply)
-        return use_template(f"LLM text rejected: {'; '.join(problems)}", retryable=True)
-    log_request("llm_ok", vault, None, reply)
-    return Brief(case_id, text.rstrip() + "\n", "llm", None, model, provider.key, True)
+    llm = client or make_client(provider, key)
+    base_prompt = build_prompt(masked, pack)
+    prompt = base_prompt
+    transport_retried = validation_retried = False
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            reply = call_llm(llm, provider, model, prompt)
+        except Exception as exc:  # noqa: BLE001 - fail safely: any LLM problem returns the template
+            detail = f"unusable reply: {exc}" if isinstance(exc, LLMUnusableError) else _describe(exc)
+            log.warning("LLM call for %s failed (attempt %d): %s", case_id, attempt, detail)
+            log_request("error", vault, detail, attempt=attempt)
+            wait = None if transport_retried else retry_wait(exc, wait_cap)
+            if wait is None:
+                out = use_template(f"LLM call failed: {detail}", retryable=True)
+                out.attempts = attempt
+                return out
+            transport_retried = True
+            time.sleep(wait)
+            continue
+
+        # Validate the reply while it is still masked, then restore the identifiers for display.
+        masked_problems = validate_brief(reply.text, pack)
+        masked_problems += [f"unknown placeholder {t}" for t in unknown_placeholders(reply.text, vault)]
+        problems = list(masked_problems)
+        text = unmask_text(reply.text, vault) if not problems else ""
+        problems += validate_brief(text, pack) if text else []
+        if not problems:
+            log_request("llm_ok", vault, None, reply, attempt)
+            if cache is not None:
+                try:
+                    cache.put_cached_brief(
+                        case_id=case_id, horizon=horizon, provider=provider.key, pack_hash=digest,
+                        masked_text=reply.text, model=model, input_tokens=reply.input_tokens,
+                        output_tokens=reply.output_tokens,
+                    )  # fmt: skip
+                except Exception:  # noqa: BLE001 - failing to store must not lose the brief
+                    log.warning("could not cache the brief for %s", case_id)
+            return Brief(case_id, text.rstrip() + "\n", "llm", None, model, provider.key, True,
+                         attempts=attempt)  # fmt: skip
+        log_request("validation_failed", vault, "; ".join(problems), reply, attempt)
+        if validation_retried:
+            out = use_template(f"LLM text rejected: {'; '.join(problems)}", retryable=True)
+            out.attempts = attempt
+            return out
+        validation_retried = True
+        # Only problems found in the masked reply are quoted back: they contain no real value.
+        feedback = "; ".join(masked_problems) or "the restored text failed the same checks"
+        prompt = (
+            f"{base_prompt}\n\nYour previous reply was rejected by the validator: {feedback}. "
+            "Write the whole brief again and fix these problems."
+        )
+        if IDENTIFIER.search(prompt):  # the same leak check, on the longer retry prompt
+            log_request("leak_blocked", vault, "An identifier pattern appeared in the retry prompt",
+                        attempt=attempt + 1)  # fmt: skip
+            out = use_template("blocked before sending: identifier in retry prompt", retryable=True)
+            out.attempts = attempt
+            return out
 
 
 if __name__ == "__main__":

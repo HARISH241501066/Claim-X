@@ -308,7 +308,7 @@ def test_brief_horizon_is_validated_and_passed_through(client):
 def test_brief_reports_when_the_llm_wrote_it(client, monkeypatch):
     monkeypatch.setattr(
         api_main, "generate_brief",
-        lambda case_id, horizon, db_path, record=None: Brief(
+        lambda case_id, horizon, db_path, **kw: Brief(
             case_id, "TEXT\n", "llm", None, "claude-opus-5-5", "anthropic", True
         ),
     )  # fmt: skip

@@ -29,11 +29,20 @@ CREATE TABLE IF NOT EXISTS llm_requests (
     provider TEXT NOT NULL, model TEXT,
     outcome TEXT NOT NULL CHECK (outcome IN ('llm_ok', 'validation_failed', 'leak_blocked', 'error')),
     tokens_by_kind TEXT NOT NULL, dropped_fields TEXT NOT NULL,
-    input_tokens INTEGER, output_tokens INTEGER, detail TEXT);
+    input_tokens INTEGER, output_tokens INTEGER, detail TEXT,
+    attempt INTEGER NOT NULL DEFAULT 1);
 CREATE TRIGGER IF NOT EXISTS llm_requests_no_update BEFORE UPDATE ON llm_requests
 BEGIN SELECT RAISE(ABORT, 'llm_requests is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS llm_requests_no_delete BEFORE DELETE ON llm_requests
 BEGIN SELECT RAISE(ABORT, 'llm_requests is append-only'); END;
+
+-- Accepted LLM briefs, kept in their masked form (placeholders such as PERSON_1) so no real value
+-- is stored here. The same evidence rebuilds the same placeholders, which restores the names.
+CREATE TABLE IF NOT EXISTS brief_cache (
+    case_id TEXT NOT NULL, horizon INTEGER NOT NULL, provider TEXT NOT NULL,
+    pack_hash TEXT NOT NULL, masked_text TEXT NOT NULL, model TEXT,
+    input_tokens INTEGER, output_tokens INTEGER, created_at TEXT NOT NULL,
+    PRIMARY KEY (case_id, horizon, provider, pack_hash));
 """
 
 DETAIL_LIMIT = 300
@@ -49,6 +58,9 @@ class AuditLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as con:
             con.executescript(DDL)
+            columns = {row[1] for row in con.execute("PRAGMA table_info(llm_requests)")}
+            if "attempt" not in columns:  # an older file: add the column, keep every row
+                con.execute("ALTER TABLE llm_requests ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1")
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path, timeout=10)
@@ -110,6 +122,7 @@ class AuditLog:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         detail: str | None = None,
+        attempt: int = 1,
     ) -> dict:
         """Log one LLM attempt. `audit` is masker.audit_record(): token kinds and dropped field
         names only. `detail` is a short reason code, never reply text."""
@@ -118,11 +131,12 @@ class AuditLog:
             with con:
                 cursor = con.execute(
                     "INSERT INTO llm_requests (ts, case_id, provider, model, outcome, tokens_by_kind, "
-                    "dropped_fields, input_tokens, output_tokens, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "dropped_fields, input_tokens, output_tokens, detail, attempt) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (now_iso(), case_id, provider, model, outcome,
                      json.dumps(audit.get("tokens_by_kind", {}), sort_keys=True),
                      json.dumps(audit.get("dropped_fields", [])), input_tokens, output_tokens,
-                     (detail or None) and detail[:DETAIL_LIMIT]),
+                     (detail or None) and detail[:DETAIL_LIMIT], attempt),
                 )  # fmt: skip
             row = con.execute(
                 "SELECT * FROM llm_requests WHERE request_id = ?", (cursor.lastrowid,)
@@ -147,6 +161,62 @@ class AuditLog:
         finally:
             con.close()
         return [self._llm_entry(r) for r in rows]
+
+    def get_cached_brief(
+        self, case_id: str, horizon: int, provider: str, pack_hash: str
+    ) -> dict | None:
+        """The accepted masked brief for exactly this evidence, or None."""
+        con = self._connect()
+        try:
+            row = con.execute(
+                "SELECT * FROM brief_cache WHERE case_id = ? AND horizon = ? AND provider = ? "
+                "AND pack_hash = ?",
+                (case_id, horizon, provider, pack_hash),
+            ).fetchone()
+        finally:
+            con.close()
+        return dict(row) if row else None
+
+    def put_cached_brief(
+        self,
+        *,
+        case_id: str,
+        horizon: int,
+        provider: str,
+        pack_hash: str,
+        masked_text: str,
+        model: str | None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+    ) -> None:
+        """Store an accepted brief and drop older ones for the same case, horizon and provider."""
+        con = self._connect()
+        try:
+            with con:
+                con.execute(
+                    "DELETE FROM brief_cache WHERE case_id = ? AND horizon = ? AND provider = ? "
+                    "AND pack_hash <> ?",
+                    (case_id, horizon, provider, pack_hash),
+                )
+                con.execute(
+                    "INSERT OR REPLACE INTO brief_cache (case_id, horizon, provider, pack_hash, "
+                    "masked_text, model, input_tokens, output_tokens, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (case_id, horizon, provider, pack_hash, masked_text, model, input_tokens,
+                     output_tokens, now_iso()),
+                )  # fmt: skip
+        finally:
+            con.close()
+
+    def list_cached_briefs(self) -> list[dict]:
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT * FROM brief_cache ORDER BY case_id, horizon, provider"
+            ).fetchall()
+        finally:
+            con.close()
+        return [dict(r) for r in rows]
 
     def latest_decisions(self) -> dict[str, dict]:
         """The most recent decision per case."""

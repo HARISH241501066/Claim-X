@@ -33,18 +33,21 @@ from backend.api.schemas import (
     HealthOut,
     OverrideIn,
     OverviewOut,
+    PrewarmItem,
+    PrewarmOut,
     PriorityOverrideOut,
     QueueOut,
     StageOut,
 )
 from backend.audit import AUDIT_PATH, AuditLog
-from backend.brief.generate import PROVIDERS, generate_brief
+from backend.brief.generate import INTERACTIVE_WAIT_CAP, PREWARM_WAIT_CAP, PROVIDERS, generate_brief
 from backend.pipeline import PipelineError, PipelineState
 
 log = logging.getLogger("claimshield.api")
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 VITE_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 DEFAULT_CAPACITY_HOURS = 40.0
+PREWARM_PAUSE_SECONDS = 2.0  # between prewarm calls that reached the LLM, to respect rate limits
 RETRY_AFTER_SECONDS = 60.0  # how long a failed LLM attempt's template is reused before trying again
 
 Runner = Callable[[Path], PipelineState]
@@ -65,6 +68,7 @@ class Runtime:
         self.briefs: dict[tuple[str, str, int], tuple[BriefOut, float | None]] = {}
         self.brief_locks: dict[tuple[str, str, int], threading.Lock] = {}
         self.brief_guard = threading.Lock()
+        self.prewarm_lock = threading.Lock()
         self.runner = runner
         self.rerun_lock = threading.Lock()
         self.decision_lock = threading.Lock()
@@ -186,6 +190,42 @@ def create_app(
             rt.overrides,
         )
 
+    def make_brief(
+        rt: Runtime,
+        state: PipelineState,
+        case_id: str,
+        horizon: int,
+        *,
+        wait_cap: float = INTERACTIVE_WAIT_CAP,
+        retry_failed: bool = False,
+    ) -> BriefOut:
+        """One brief per case and run: memory first, then the stored brief, then the LLM.
+        Simultaneous requests share a lock, so they make one LLM call between them."""
+        key = (state.finished_at, case_id, horizon)
+        with rt.lock_for(key):
+            cached = rt.briefs.get(key)
+            if cached and (cached[1] is None or (not retry_failed and cached[1] > time.monotonic())):
+                return cached[0].model_copy(update={"cached": True, "attempts": 0})
+            brief = generate_brief(
+                case_id, horizon, state.db_path, cache=rt.audit, wait_cap=wait_cap,
+                record=lambda row: rt.audit.record_llm_request(**row),
+            )
+            label = PROVIDERS[brief.provider].label if brief.provider in PROVIDERS else "Template"
+            out = BriefOut(
+                case_id=case_id, horizon_days=horizon, source=brief.source,
+                fallback_reason=brief.fallback_reason, model=brief.model, provider=brief.provider,
+                provider_label=label, masked=brief.masked, cached=brief.cached,
+                attempts=brief.attempts, brief=brief.text,
+            )  # fmt: skip
+            expires = time.monotonic() + RETRY_AFTER_SECONDS if brief.retryable else None
+            rt.briefs[key] = (out, expires)
+            rt.audit.append("brief", case_id=case_id,
+                            details={"horizon": horizon, "source": brief.source,
+                                     "provider": brief.provider, "masked": brief.masked,
+                                     "cached": brief.cached, "attempts": brief.attempts,
+                                     "fallback_reason": brief.fallback_reason})  # fmt: skip
+            return out
+
     def find_case(state: PipelineState, case_id: str):
         case = state.case(case_id)
         if case is None:
@@ -225,27 +265,7 @@ def create_app(
     ):
         """Investigation brief: written by the LLM only if a key is set and the text validates."""
         find_case(state, case_id)
-        key = (state.finished_at, case_id, horizon)
-        with rt.lock_for(key):  # a second request for the same brief waits, then reuses the result
-            cached = rt.briefs.get(key)
-            if cached and (cached[1] is None or cached[1] > time.monotonic()):
-                return cached[0].model_copy(update={"cached": True})
-            brief = generate_brief(
-                case_id, horizon, state.db_path, record=lambda row: rt.audit.record_llm_request(**row)
-            )
-            label = PROVIDERS[brief.provider].label if brief.provider in PROVIDERS else "Template"
-            out = BriefOut(
-                case_id=case_id, horizon_days=horizon, source=brief.source,
-                fallback_reason=brief.fallback_reason, model=brief.model, provider=brief.provider,
-                provider_label=label, masked=brief.masked, brief=brief.text,
-            )  # fmt: skip
-            expires = time.monotonic() + RETRY_AFTER_SECONDS if brief.retryable else None
-            rt.briefs[key] = (out, expires)
-            rt.audit.append("brief", case_id=case_id,
-                            details={"horizon": horizon, "source": brief.source,
-                                     "provider": brief.provider, "masked": brief.masked,
-                                     "fallback_reason": brief.fallback_reason})  # fmt: skip
-            return out
+        return make_brief(rt, state, case_id, horizon)
 
     @app.post("/cases/{case_id}/decision", response_model=DecisionOut, status_code=201)
     def decide(case_id: str, body: DecisionIn, rt: RuntimeDep, state: StateDep):
@@ -300,6 +320,45 @@ def create_app(
     ):
         """Decisions and pipeline runs, latest first."""
         return rt.audit.list(limit, case_id)
+
+    @app.post("/admin/prewarm-briefs", response_model=PrewarmOut)
+    def prewarm_briefs(
+        rt: RuntimeDep,
+        state: StateDep,
+        top: Annotated[int, Query(ge=1, le=10, description="How many top-ranked cases")] = 5,
+    ):
+        """Write and store the briefs of the top cases of the default queue (open cases, default
+        weights, reviewer overrides applied), pausing between calls that reached the LLM."""
+        if not rt.prewarm_lock.acquire(blocking=False):
+            raise HTTPException(409, "A prewarm is already in progress")
+        started = time.monotonic()
+        try:
+            queue = views.build_queue(
+                state, rt.decisions, DEFAULT_CAPACITY_HOURS, views.parse_weights(None), False,
+                rt.overrides,
+            )
+            ranked = sorted(queue.scheduled + queue.backlog, key=lambda i: i.rank)[:top]
+            items: list[PrewarmItem] = []
+            for n, item in enumerate(ranked):
+                out = make_brief(rt, state, item.case_id, 30, wait_cap=PREWARM_WAIT_CAP,
+                                 retry_failed=True)  # fmt: skip
+                items.append(PrewarmItem(
+                    rank=item.rank, case_id=item.case_id, source=out.source,
+                    provider_label=out.provider_label, cached=out.cached, attempts=out.attempts,
+                    fallback_reason=out.fallback_reason,
+                ))  # fmt: skip
+                if out.attempts and n < len(ranked) - 1:
+                    time.sleep(PREWARM_PAUSE_SECONDS)  # only after a call that used the provider
+            return PrewarmOut(
+                requested=top,
+                generated=sum(1 for i in items if i.source == "llm" and not i.cached),
+                already_cached=sum(1 for i in items if i.source == "llm" and i.cached),
+                fell_back=sum(1 for i in items if i.source == "template"),
+                llm_calls=sum(i.attempts for i in items),
+                seconds=round(time.monotonic() - started, 1), items=items,
+            )
+        finally:
+            rt.prewarm_lock.release()
 
     @app.post("/admin/rerun", response_model=HealthOut)
     def rerun(rt: RuntimeDep):
