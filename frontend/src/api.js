@@ -71,7 +71,7 @@ export function errorMessage(err) {
     return `The server answered with an error (${status}).`
   }
   if (err?.code === 'ECONNABORTED') return 'The server took too long to answer.'
-  return `Cannot reach the API at ${API_URL}. Is it running?`
+  return `Cannot reach the API at ${API_URL || window.location.origin}. Is it running?`
 }
 
 const put = (url, body) => http.put(url, body).then((r) => r.data)

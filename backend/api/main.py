@@ -25,7 +25,7 @@ from backend import pipeline
 from backend.access.routing import route_cases
 from backend.access.seed import Seeder, ensure_seeded, seed_demo
 from backend.access.store import AccessStore
-from backend.api import access_routes, notifications, scope, views
+from backend.api import access_routes, notifications, scope, static, views
 from backend.api.deps import (
     AdminDep,
     UserDep,
@@ -52,7 +52,13 @@ from backend.api.schemas import (
     StageOut,
 )
 from backend.audit import AUDIT_PATH, AuditLog
-from backend.brief.generate import INTERACTIVE_WAIT_CAP, PREWARM_WAIT_CAP, PROVIDERS, generate_brief
+from backend.brief.generate import (
+    INTERACTIVE_WAIT_CAP,
+    PREWARM_WAIT_CAP,
+    PROVIDERS,
+    generate_brief,
+    resolve_setting,
+)
 from backend.notify import alerts
 from backend.notify.notifier import email_channel, load_config
 from backend.notify.store import NotifyStore
@@ -170,6 +176,7 @@ def create_app(
     team_hours: float = DEFAULT_CAPACITY_HOURS,
     runner: Runner | None = None,
     seed: Seeder | None = None,
+    static_dir: Path | None = None,
 ) -> FastAPI:
     # CLAIMX_AUDIT_PATH lets a demo or test use its own audit file
     audit_file = Path(audit_path or os.environ.get("CLAIMX_AUDIT_PATH") or AUDIT_PATH)
@@ -193,10 +200,14 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.runtime = runtime
+    extra = [o.strip().rstrip("/") for o in resolve_setting("CORS_ORIGINS", None).split(",") if o.strip()]
     app.add_middleware(
-        CORSMiddleware, allow_origins=VITE_ORIGINS, allow_origin_regex=DEV_ORIGIN_PATTERN, allow_methods=["GET", "POST", "PUT", "OPTIONS"],
-        allow_headers=["*"], expose_headers=["Content-Disposition"],
+        CORSMiddleware, allow_origins=[*VITE_ORIGINS, *extra], allow_origin_regex=DEV_ORIGIN_PATTERN,
+        allow_methods=["GET", "POST", "PUT", "OPTIONS"], allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
     )  # fmt: skip
+    if static_dir is not None or resolve_setting("CLAIMX_SERVE_FRONTEND", None).lower() in {"true", "1", "yes"}:
+        static.serve_frontend(app, static_dir or static.DEFAULT_DIST)
 
     def make_brief(
         rt: Runtime,

@@ -1,0 +1,16 @@
+# Render blueprint: New + > Blueprint, pick this repository, then fill in DEMO_PASSWORD.
+services:
+  - type: web
+    name: claim-x
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true # a fresh random secret, kept on Render only
+      - key: DEMO_PASSWORD
+        sync: false # you type it in the Render dashboard; it is never in git
+      - key: LLM_PROVIDER
+        value: none # the built-in template writes the briefs
+      - key: NOTIFY_EMAIL_ENABLED
+        value: "false"

@@ -177,6 +177,16 @@ These check that the pipeline works, not real-world accuracy: 40 providers and s
 | Append-only audit | The database refuses edits and deletes; refusals and downloads are logged |
 | Role-based access in the API | Permissions are enforced server-side; screens only reflect them |
 
+## Deploy
+
+| Item | Detail |
+|---|---|
+| One container | The `Dockerfile` builds the web app and serves it from the API on one address |
+| Fastest host | Render: **New + → Blueprint**, pick this repo (`render.yaml`), enter `DEMO_PASSWORD`; `JWT_SECRET` is generated |
+| Other hosts | Railway, Fly.io, Cloud Run, or `docker run -p 8000:8000 -e JWT_SECRET=... -e DEMO_PASSWORD=... claim-x` |
+| Checked by CI | A job builds the image, starts it and checks the page, the API and sign-in |
+| Steps, settings and cautions | [docs/DEPLOY.md](docs/DEPLOY.md) |
+
 ## Configuration
 
 Copy `.env.example` to `.env` (git-ignored). Every setting is listed there, empty, with a one-line comment.
@@ -186,7 +196,7 @@ Copy `.env.example` to `.env` (git-ignored). Every setting is listed there, empt
 | `JWT_SECRET`, `DEMO_PASSWORD` | Running the app (required) |
 | `LLM_PROVIDER` (`groq`, `xai`, `anthropic`; default `none`), `LLM_API_KEY`, `LLM_MODEL` | AI-written briefs; without them the template writes every brief |
 | `NOTIFY_EMAIL_ENABLED`, `SNS_TOPIC_ARN`, `AWS_REGION`, `APP_BASE_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Urgent-case email through AWS SNS (key needs only `sns:Publish` on the topic) |
-| `CLAIMX_AUDIT_PATH`, `VITE_API_URL` | Optional: another audit file; another API address for the web app |
+| `CLAIMX_AUDIT_PATH`, `VITE_API_URL`, `CLAIMX_SERVE_FRONTEND`, `CORS_ORIGINS` | Optional: another audit file; another API address for the web app; serve the built web app from the API; extra allowed web addresses |
 
 ## Known limitations
 
@@ -223,4 +233,5 @@ Copy `.env.example` to `.env` (git-ignored). Every setting is listed there, empt
 | `backend/tests/` | Test suite and `scenario_report.py` |
 | `backend/demo_reset.py` | `make reset` |
 | `frontend/` | React app, unit tests, `e2e/flow.mjs` |
-| `docs/` | `DEMO.md` (checklist, offline fallback, rule demo), `TESTING.md` (what each test proves), `demo/weekend_billing.py` (demo rule) |
+| `Dockerfile`, `render.yaml` | One-container deploy (API plus built web app) |
+| `docs/` | `DEMO.md` (checklist, offline fallback, rule demo), `TESTING.md` (what each test proves), `DEPLOY.md` (hosting), `demo/weekend_billing.py` (demo rule) |
