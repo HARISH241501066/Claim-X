@@ -25,7 +25,7 @@ Everything here uses synthetic data. A demo needs about ten minutes of preparati
 
 The claim: **a new detection rule is one file, with no change to the engine, the API or the screens.** The ready-made rule is `docs/demo/weekend_billing.py`: it flags a provider that bills 6 or more claims on a single Saturday or Sunday. It is kept outside `backend/detect/rules/`, so the product has its 7 rules until you copy it in.
 
-Do this with the app running (after `make reset`, `make api`, `make web`):
+Do this with the app running (after `make reset`, `make api`, `make web`). Do not run the tests while presenting: they briefly copy this same file in and out of the rules folder, and a running API that is watching files would pick it up.
 
 1. **Before.** Sign in as `admin`. On **Overview**, note the findings total (58) and the "findings per rule" chart. It has no `weekend_billing` bar. In a terminal you can also show the rules the engine knows:
    ```powershell
@@ -35,15 +35,17 @@ Do this with the app running (after `make reset`, `make api`, `make web`):
 2. **Show the file.** Open `docs/demo/weekend_billing.py` (about 40 lines): a class with a `name`, a `severity` and one `evaluate` method that returns findings, each with a reason and evidence IDs.
 3. **Add the rule: copy one file.**
    ```powershell
-   copy docs\demo\weekend_billing.py backend\detectules   ```
+   copy docs\demo\weekend_billing.py backend\detect
+ules   ```
    Say it out loud: "I changed no engine code." (`git status` shows one new file.)
 4. **Run.** On **System**, click **Rerun the pipeline**. (If you started the API with `make api`, it may also restart by itself when the file appears, which has the same effect.)
-5. **After.** On **Overview**, the findings total is now 60 and the chart has a **weekend_billing** bar of 2. Open **CASE-0001** (the ring) and **CASE-0008**: each has one more evidence item from the new rule, with its claim IDs. The bell shows a warning "1 new finding(s) on CASE-0001". The rule's severity is low, so it adds evidence without pushing the case up the queue by itself.
+5. **After.** On **Overview**, the findings total is now 60 and the chart has a **weekend_billing** bar of 2. Open **CASE-0001** (the ring) and **CASE-0008**: each has one more evidence item from the new rule, with its claim IDs. The bell shows warnings such as "2 new finding(s) on CASE-0001" and "1 new finding(s) on CASE-0008" (a new rule also nudges the related ring and anomaly findings, so the count can be higher than the one new rule finding). The rule's severity is low, so it adds evidence without pushing the case up the queue by itself.
 6. **Remove it again** (to restore the 7-rule product):
    ```powershell
-   del backend\detectules\weekend_billing.py
+   del backend\detect
+ules\weekend_billing.py
    ```
-   then **Rerun the pipeline** once more. The totals go back to 58.
+   then **Rerun the pipeline** once more. The totals go back to 58 (the bell may add a notice or two as those related findings change back).
 
 What to say: new rules are plug-ins. A rule that crashes is skipped and logged, so one bad rule can never stop the others. Findings must carry evidence, so even a new rule's output stays explainable. What a rule cannot do is decide: it only recommends.
 
