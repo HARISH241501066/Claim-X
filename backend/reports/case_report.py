@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from backend.brief.labels import describe
 from backend.reports.common import (
     BULLET,
     H1,
@@ -79,7 +80,7 @@ def build_case_report(
     story.append(para("Evidence", H2))
     rows = [head_row(["Key", "Evidence ID", "Detector", "Entity", "Severity", "Reason", "Claim IDs"])]
     for finding in detail.findings:
-        rows.append([cell(finding.key or "-"), cell(finding.finding_id), cell(finding.detector),
+        rows.append([cell(finding.key or "-"), cell(finding.finding_id), cell(describe(finding.detector)),
                      cell(finding.entity_id), cell(finding.severity), cell(finding.reason),
                      cell(_ids(finding.evidence_ids))])  # fmt: skip
     story.append(table(rows, [PAGE_WIDTH * f for f in (0.05, 0.11, 0.09, 0.1, 0.07, 0.34, 0.24)]))

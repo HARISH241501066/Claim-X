@@ -91,7 +91,12 @@ export default function EvidenceList({ caseId, findings, selectedKey, onSelect }
           >
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="accent" className="font-semibold">{f.key}</Badge>
-              <span className="text-sm font-medium text-ink">{f.detector.replace('_', ' ')}</span>
+              <span className="text-sm font-medium text-ink" data-testid="rule-label">{f.rule_label ?? f.detector.replace('_', ' ')}</span>
+              {f.rule_kind && (
+                <span className="rounded border border-line px-1.5 py-0.5 text-xs text-ink-2" data-testid="rule-kind">
+                  {f.rule_kind}
+                </span>
+              )}
               <Badge tone={SEVERITY_TONE[f.severity] ?? 'neutral'}>{f.severity}</Badge>
               <span className="text-xs text-muted">score {f.score.toFixed(2)} · {f.finding_id} · {f.entity_id}</span>
             </div>

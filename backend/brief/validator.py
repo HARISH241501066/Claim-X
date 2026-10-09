@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from backend.brief.evidence import Pack
+from backend.brief.labels import describe, rule_label
 from backend.brief.template import FINAL_LINE, SECTIONS
 
 BANNED_WORDS = ("guilty", "fraudster", "committed fraud", "fraudulent", "criminal")
@@ -48,6 +49,14 @@ def validate_brief(text: str, pack: Pack) -> list[str]:
         found = [t for t in CITATION.findall(body.get(needed, "")) if t in valid_keys]
         if needed in body and not found:
             reasons.append(f"{needed} has no valid [E#] citation")
+
+    if "Evidence" in body:  # every evidence item must say what type of check found it
+        evidence_text = body["Evidence"].lower()
+        reasons += [
+            f"Evidence section does not name the type of check for [{e.key}] (expected '{describe(e.detector)}')"
+            for e in pack.evidence
+            if rule_label(e.detector).lower() not in evidence_text
+        ]
 
     lowered = text.lower()
     reasons += [f"banned word '{w}'" for w in BANNED_WORDS if w in lowered]

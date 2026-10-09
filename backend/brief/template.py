@@ -8,6 +8,7 @@ never states or implies guilt.
 from __future__ import annotations
 
 from backend.brief.evidence import SAMPLE_CLAIMS, EvidenceItem, Pack
+from backend.brief.labels import describe, rule_label
 from backend.cases.builder import DETECTOR_GROUPS, detector_group
 
 SECTIONS = [
@@ -30,6 +31,12 @@ def _keys_for(pack: Pack, group: str) -> list[str]:
     return [e.key for e in pack.evidence if detector_group(e.detector) == group]
 
 
+def _fired_text(pack: Pack, group: str) -> str:
+    """'rules (duplicate billing, unbundling) [E1][E3]': the group and the checks inside it."""
+    names = sorted({rule_label(e.detector).lower() for e in pack.evidence if detector_group(e.detector) == group})
+    return f"{group} ({', '.join(names)}) {cites(_keys_for(pack, group))}"
+
+
 def _summary(pack: Pack) -> list[str]:
     entities = pack.network["entities"]
     if pack.case_type == "ring":
@@ -40,9 +47,7 @@ def _summary(pack: Pack) -> list[str]:
             f"provider {pack.primary_entity} ({d['specialty']}, {d['city']})" if d
             else f"entity {pack.primary_entity}"
         )  # fmt: skip
-    fired = [
-        f"{g} {cites(_keys_for(pack, g))}" for g in DETECTOR_GROUPS if g in pack.detectors_fired
-    ]
+    fired = [_fired_text(pack, g) for g in DETECTOR_GROUPS if g in pack.detectors_fired]
     claim_keys = [e.key for e in pack.evidence if e.scope == "claim-specific"]
     if pack.flagged_amount > 0:
         value = (
@@ -66,7 +71,9 @@ def _summary(pack: Pack) -> list[str]:
 
 
 def _evidence_line(item: EvidenceItem) -> str:
-    head = f"- [{item.key}] {item.detector} ({item.severity}, score {item.score:.2f}): {item.reason}"
+    head = (
+        f"- [{item.key}] {describe(item.detector)}, {item.severity}, score {item.score:.2f}: {item.reason}"
+    )
     if item.scope == "provider-level":
         tail = f"Scope: provider-level signal across {len(item.claim_ids)} claims of {item.entity_id}."
     else:

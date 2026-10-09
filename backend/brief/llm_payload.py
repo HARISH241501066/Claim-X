@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 
 from backend.brief.evidence import SAMPLE_CLAIMS, Pack
+from backend.brief.labels import describe
 from backend.brief.masker import LeakError, Vault, assert_no_leak, mask_pack
 
 # Member, provider, owner and facility identifiers, wherever they appear in the text.
@@ -27,7 +28,7 @@ def _evidence(pack: Pack) -> list[dict]:
             reason += f" (Provider-level signal across {len(e.claim_ids)} claims, not specific claims.)"
         findings.append(
             {
-                "evidence_key": e.key, "detector": e.detector, "entity_id": e.entity_id,
+                "evidence_key": e.key, "detector": describe(e.detector), "entity_id": e.entity_id,
                 "severity": e.severity, "score": e.score, "reason": reason,
                 "claim_ids": e.claim_ids[:SAMPLE_CLAIMS], "count": len(e.claim_ids),
                 "evidence_ids": e.other_ids,

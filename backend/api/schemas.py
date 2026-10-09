@@ -110,6 +110,8 @@ class FindingOut(BaseModel):
     score: float
     reason: str
     evidence_ids: list[str]
+    rule_label: str | None = None  # for example "Duplicate billing"
+    rule_kind: str | None = None  # claim rule, anomaly model or network analysis
 
 
 class TimelineOut(BaseModel):

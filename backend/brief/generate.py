@@ -67,6 +67,8 @@ and never call anyone a fraudster or say anyone committed fraud.
 - People and organisations appear as placeholders such as PERSON_1 and ORG_2. Use them \
 exactly as given and never guess who they are.
 - Do not change the confidence level or the limitations: copy them exactly as given.
+- In the Evidence section, begin each item with its [E#] and then the type of check that found it, \
+copied exactly from its detector field (for example "Duplicate billing (claim rule)"), then what was found.
 - Write exactly these sections as markdown headings (##), in this order: \
 {', '.join(SECTIONS)}. Use short paragraphs and bullet lists; do not use tables.
 - End the brief with this exact line and nothing after it: {FINAL_LINE}"""

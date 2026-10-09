@@ -33,6 +33,7 @@ from backend.api.schemas import (
     TimelineOut,
 )
 from backend.brief.evidence import predictions_for
+from backend.brief.labels import rule_kind, rule_label
 from backend.cases import ranking
 from backend.cases.builder import SEVERITY_ORDER, Case
 from backend.detect import graph as graph_module
@@ -230,7 +231,7 @@ def build_case_detail(
         key = keys.get(finding["finding_id"])
         return (key is None, int(key[1:]) if key else 0)
 
-    fields = [name for name in FindingOut.model_fields if name != "key"]
+    fields = [name for name in FindingOut.model_fields if name not in {"key", "rule_label", "rule_kind"}]
     return CaseDetail(
         case_id=case.case_id, title=case_title(case), case_type=case.case_type,
         primary_entity=case.primary_entity, entity_ids=case.entity_ids,
@@ -244,7 +245,8 @@ def build_case_detail(
         affected_members=case.affected_members, detectors_fired=case.detectors_fired,
         summary=case.summary,
         findings=[
-            FindingOut(key=keys.get(f["finding_id"]), **{k: f[k] for k in fields})
+            FindingOut(key=keys.get(f["finding_id"]), rule_label=rule_label(f["detector"]),
+                       rule_kind=rule_kind(f["detector"]), **{k: f[k] for k in fields})
             for f in sorted(case.findings, key=order)
         ],
         timeline=[TimelineOut(**asdict(t)) for t in pack.timeline] if pack else [],

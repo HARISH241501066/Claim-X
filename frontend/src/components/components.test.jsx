@@ -6,6 +6,7 @@ import * as api from '../api'
 import { briefData, caseDetail, evidenceRows, factors, prediction, providerItem, queueData, queueItem, windows } from '../test/fixtures'
 import Async from './Async'
 import Brief from './Brief'
+import EvidenceList from './EvidenceList'
 import DetectorChips from './DetectorChips'
 import FindingsChart from './FindingsChart'
 import QueueTable from './QueueTable'
@@ -456,5 +457,24 @@ describe('evidence rows endpoint shape used by the UI', () => {
     expect(Object.keys(evidenceRows().claims[0])).toEqual(
       expect.arrayContaining(['claim_id', 'service_date', 'member_id', 'provider_id', 'facility_id', 'procedure_code', 'billed_amount']),
     )
+  })
+})
+
+describe('EvidenceList rule type', () => {
+  it('names the type of check that found each item, with a plain label and its kind', () => {
+    const findings = [
+      { key: 'E1', finding_id: 'FND-1', detector: 'duplicate', rule_label: 'Duplicate billing', rule_kind: 'claim rule', entity_id: 'PRV-1', severity: 'high', score: 0.9, reason: 'Two claims', evidence_ids: ['CLM-1'] },
+      { key: 'E2', finding_id: 'FND-2', detector: 'ring', rule_label: 'Referral ring', rule_kind: 'network analysis', entity_id: 'RING-01', severity: 'high', score: 0.76, reason: 'A network', evidence_ids: ['CLM-2'] },
+    ]
+    render(<EvidenceList caseId="CASE-0001" findings={findings} selectedKey={null} onSelect={() => {}} />)
+    expect(screen.getAllByTestId('rule-label').map((n) => n.textContent)).toEqual(['Duplicate billing', 'Referral ring'])
+    expect(screen.getAllByTestId('rule-kind').map((n) => n.textContent.trim())).toEqual(['claim rule', 'network analysis'])
+  })
+
+  it('falls back to the raw name when the API sends no label', () => {
+    const findings = [{ key: 'E1', finding_id: 'FND-1', detector: 'impossible_timing', entity_id: 'PRV-1', severity: 'high', score: 0.6, reason: 'r', evidence_ids: ['CLM-1'] }]
+    render(<EvidenceList caseId="CASE-0001" findings={findings} selectedKey={null} onSelect={() => {}} />)
+    expect(screen.getByTestId('rule-label')).toHaveTextContent('impossible timing')
+    expect(screen.queryByTestId('rule-kind')).toBeNull()
   })
 })
