@@ -2,7 +2,18 @@
 
 [![CI](https://github.com/HARISH241501066/Claim-X/actions/workflows/ci.yml/badge.svg)](https://github.com/HARISH241501066/Claim-X/actions/workflows/ci.yml)
 
-ClaimShield Nexus helps a health insurer's special investigations unit (SIU) find and review claims that warrant a second look. It scans a synthetic claims history with seven plug-in rules, an anomaly model, a referral-network analysis and a small risk model, groups what it finds into cases, ranks them against the team's available hours, and writes an evidence-cited brief for each case. Investigators work in a role-based console: a team lead assigns cases, the assigned investigator reviews the evidence and decides, and every step is written to an append-only audit log. **The system only recommends. A person decides every case, and nothing is ever denied, blocked or sent automatically.** All data is synthetic.
+A review workbench for health-insurance fraud, waste and abuse teams. It finds suspicious claims, groups them into evidence-backed cases, ranks them against the team's hours, and hands each case to a person to decide. All data is synthetic.
+
+## At a glance
+
+| Question | Answer |
+|---|---|
+| What does it do? | Detects, explains, ranks and routes suspicious claims; investigators decide |
+| Who uses it? | SIU admins, team leads and investigators |
+| Who decides? | A person, always. Nothing is denied, blocked or sent automatically |
+| What does every flag carry? | Evidence IDs, the type of check that found it, and a plain-language reason |
+| How is AI used? | A masked, validated LLM writes briefs; a built-in template is the fallback |
+| What is recorded? | Every login, assignment, decision, refusal and download, in an append-only audit log |
 
 ## How it works
 
@@ -14,7 +25,7 @@ flowchart LR
     R --> C[Cases<br/>evidence IDs]
     A --> C
     G --> C
-    D --> P[Gradient Boosting<br/>30-day investigation risk]
+    D --> P[Gradient Boosting<br/>30/60/90-day investigation risk]
     P --> C
     C --> K[Ranking<br/>priority vs team hours]
     K --> M[Masking +<br/>evidence pack]
@@ -30,130 +41,66 @@ flowchart LR
     OB --> X
 ```
 
-Everything above the console runs in one pipeline (about 4 seconds) every time the API starts or an admin reruns it.
-
 ## Quick start
 
-You need Python 3.11 and Node 20+ (tested with Node 24). From a fresh clone:
+Needs Python 3.11 and Node 20+.
 
-```bash
-# 1. Backend: virtual environment and dependencies
-python3.11 -m venv backend/.venv
-backend/.venv/bin/python -m pip install -r backend/requirements.txt        # Linux / macOS
-#   Windows (PowerShell):  backend\.venv\Scripts\python -m pip install -r backend\requirements.txt
+| Step | Linux / macOS | Windows (PowerShell) |
+|---|---|---|
+| 1. Python environment | `python3.11 -m venv backend/.venv` | `python -m venv backend\.venv` |
+| 2. Python packages | `backend/.venv/bin/python -m pip install -r backend/requirements.txt` | `backend\.venv\Scripts\python -m pip install -r backend\requirements.txt` |
+| 3. Frontend packages | `npm --prefix frontend ci` | `npm --prefix frontend ci` |
+| 4. Settings | `cp .env.example .env` | `copy .env.example .env` |
+| 5. Data | `make data` | `.\make.ps1 data` |
+| 6. API (terminal 1) | `make api` | `.\make.ps1 api` |
+| 7. Web app (terminal 2) | `make web` | `.\make.ps1 web` |
 
-# 2. Frontend dependencies
-npm --prefix frontend ci
+Open http://localhost:5173 and sign in.
 
-# 3. Settings: copy the template, then set JWT_SECRET and DEMO_PASSWORD in .env (see below)
-cp .env.example .env
-python -c "import secrets; print(secrets.token_hex(32))"     # paste this as JWT_SECRET
+**Two settings are required** (set them in `.env`; both are blank in `.env.example`):
 
-# 4. Run
-make data      # generate the synthetic database and the (test-only) ground truth
-make api       # API on http://localhost:8000  (docs at /docs)  - leave it running
-make web       # web app on http://localhost:5173              - in a second terminal
-make test      # backend tests and lint
-```
-
-On Windows without `make`, use the same names with the shim: `.\make.ps1 data`, `.\make.ps1 api`, `.\make.ps1 web`, `.\make.ps1 test`, `.\make.ps1 web-test`.
-
-Open http://localhost:5173 and sign in. Only two values in `.env` are required to run; everything else is optional (and blank by default):
-
-| Setting | Why |
+| Setting | Meaning |
 |---|---|
-| `JWT_SECRET` | Signs the 8-hour login tokens (32+ random characters). |
-| `DEMO_PASSWORD` | The password of every seeded demo user (8+ characters). |
+| `JWT_SECRET` | Signs login tokens; 32+ random characters, e.g. `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `DEMO_PASSWORD` | Password of every demo user; 8+ characters |
 
-On an empty database the API creates these synthetic users: `admin`, and for each unit a lead and two investigators: `south_lead`, `south_inv1`, `south_inv2`, `north_lead`, `north_inv1`, `north_inv2`.
+**Demo users** (synthetic, created on first start):
 
-Other commands: `make coverage` (tests with a coverage report), `make web-test` (frontend lint and unit tests), `make e2e` (a real-Chrome walkthrough; needs the API and web app running), and **`make reset`** (a clean, demo-ready state, see [docs/DEMO.md](docs/DEMO.md)).
+| Username | Role | Unit |
+|---|---|---|
+| `admin` | Admin | none |
+| `south_lead` | Team lead | Unit South |
+| `south_inv1`, `south_inv2` | Investigator | Unit South |
+| `north_lead` | Team lead | Unit North |
+| `north_inv1`, `north_inv2` | Investigator | Unit North |
+
+**Other commands**
+
+| Command (`make` / `.\make.ps1`) | What it does |
+|---|---|
+| `test` | Backend tests and lint |
+| `coverage` | Backend tests with a coverage report |
+| `web-test` | Frontend lint and unit tests |
+| `e2e` | Real-Chrome walkthrough of all three roles (API and web app must be running) |
+| `reset` | Clean, demo-ready state (stop the API first); add `--email` to send the urgent-case emails; see [docs/DEMO.md](docs/DEMO.md) |
 
 ## Demo walkthrough (about 2 minutes)
 
-1. **Overview (sign in as `admin`).** The funnel shows 5,000 claims analysed, 58 findings grouped into 20 cases, and the rupee amount at risk, with a chart of findings per rule.
-2. **Queue.** "All Cases" ranks the cases by priority and draws a line where the team's 40 hours run out. Change the capacity or the priority weights and the order updates.
-3. **Ring case.** Open CASE-0001, a referral ring. Evidence items E1, E2 … each cite the claims behind them. The network graph shows owners, facilities and providers linked by referrals, with the suspicious links marked. The timeline and the 30-day investigation risk (with its band and why) sit beside it.
-4. **Brief.** The brief is built only from that evidence; every statement cites an `[E#]` that opens its claim rows. The badge says who wrote it ("Template", or "Groq (cached)" when an LLM is configured).
-5. **Assign.** Sign out, sign in as `south_lead`, open the Unit Queue and assign CASE-0001 to Arjun Nair with a reason. Team Workload shows his hours against capacity.
-6. **Decide.** Sign in as `south_inv1`. The bell shows "Case CASE-0001 assigned to you"; My Cases lists it. Try a decision without a reason (blocked), then record one with a reason. Draft a records request: it cannot be sent until approved, and then it is only marked "Sent (simulated)".
-7. **Audit and downloads.** Download the case report (PDF). As `admin`, the audit log shows the login, the assignment, the decision and the download, each with who and when. High-priority cases also appear at the top of the bell, with an envelope when an email was sent.
+| # | Sign in as | Do | What the judge sees |
+|---|---|---|---|
+| 1 | `admin` | Open **Overview** | Funnel: 5,000 claims, 58 findings, 20 cases, amount at risk, findings per rule |
+| 2 | `admin` | Open **All Cases** | Ranked queue with a line where the team's 40 hours run out |
+| 3 | `south_lead` | Open **CASE-0001** | Evidence E1, E2 (each names its check type), network graph, timeline, 30/60/90-day risk |
+| 4 | `south_lead` | Read the brief | Every statement cites `[E#]`; badge shows who wrote it |
+| 5 | `south_lead` | **Assign** to Arjun Nair with a reason | Case moves to *Assigned*; he is notified |
+| 6 | `south_inv1` | Open **My Cases**, try a decision with no reason | Blocked; then record one with a reason |
+| 7 | `south_inv1` | **Request records** | Editable draft; "will not be sent until you approve it" |
+| 8 | `admin` | Open the audit log or download the case report | Each step with who, when and why |
+| 9 | any | Click the bell | High-priority alerts first; envelope icon where an email was sent |
 
-## Detection approaches
+To show the engine is adaptable, follow "Show that the rule engine is adaptable" in [docs/DEMO.md](docs/DEMO.md).
 
-| Approach | What it catches |
-|---|---|
-| Rule: duplicate | The same member, provider, code and date billed twice. |
-| Rule: unbundling | A panel's components billed separately for more than the panel costs. |
-| Rule: upcoding | A provider billing the top consultation level far more than peers (guarded against honest busy specialists). |
-| Rule: phantom | Services billed while the member was an inpatient elsewhere. |
-| Rule: utilization | Members receiving implausibly many sessions in a month. |
-| Rule: impossible timing | A member at two far-apart facilities on one day, or a provider billing more than 24 hours in a day. |
-| Rule: repeat history | A provider with a confirmed past case whose volume is rising again. |
-| Isolation Forest | Providers whose overall profile is unusual against peers of the same specialty. |
-| Graph analytics (NetworkX, Louvain) | Referral rings: communities of providers and facilities with heavy shared patients and self-referral between related owners. |
-| Gradient Boosting | A 30-, 60- and 90-day **investigation risk** per provider (how likely a confirmed investigation is within that window), one model per window, shown beside the evidence, never instead of it. Case ranking uses the 30-day estimate. |
-
-New rules are plug-ins: drop a file into `backend/detect/rules/` and it runs with no engine change.
-
-## Results (synthetic data)
-
-Every planted scenario is found, and the two honest decoys are not flagged. Produced by `python -m backend.tests.scenario_report`, which checks the generator's ground truth (used only in tests and this report) against the findings:
-
-| Planted scenario | Planted | Flagged | Caught by | Case |
-|---|---|---|---|---|
-| Duplicate billing | 20 | 20 | duplicate (20) | CASE-0002, CASE-0004, CASE-0006 … |
-| Honest same-day follow-ups (should NOT be flagged) | 40 | 0 | none (correct: yes) | none |
-| Honest busy specialist (should NOT be flagged) | 1 | 0 | none (correct: yes) | none |
-| Impossible timing (30 hours in a day) | 1 | 1 | duplicate (1), impossible_timing (1); 30-day band Low | CASE-0014 |
-| Over-utilising members | 3 | 3 | utilization (3) | CASE-0003, CASE-0008 |
-| Phantom services (member in hospital) | 11 | 11 | duplicate (1), phantom (11); 30-day band Low | CASE-0004 |
-| Repeat offender (rising volume) | 1 | 1 | repeat_history (1); 30-day band High | CASE-0005 |
-| Referral ring (self-referring owners) | 5 | 5 | anomaly (1), ring (5) | CASE-0001 |
-| Unbundled panels | 50 | 50 | duplicate (1), unbundling (50), utilization (4); 30-day band High/Low | CASE-0011, CASE-0012 |
-| Upcoding provider | 1 | 1 | upcoding (1); 30-day band Low | CASE-0003 |
-
-"Caught by" lists every detector that flagged at least one planted entity, so a second detector may appear for a few overlapping claims. Cases are grouped by provider, so several scenarios can share a case.
-
-The risk models are evaluated alone, one per window, on each window's last held-out cut-off (`metrics.json`):
-
-| Window | Train rows / positives | Test rows / positives | Precision at 5 | Precision at 10 | Recall at 0.3 | PR-AUC (base rate) |
-|---|---|---|---|---|---|---|
-| 30 days | 120 / 12 | 40 / 3 | 0.0 | 0.1 | 0.0 | 0.145 (0.075) |
-| 60 days | 120 / 18 | 40 / 8 | 0.6 | 0.6 | 0.375 | 0.642 (0.200) |
-| 90 days | 80 / 15 | 40 / 10 | 0.6 | 0.6 | 0.6 | 0.627 (0.250) |
-
-Read these with care. There are only 40 providers, and the history is six months long, so each window has a handful of positives. A longer window sees more investigations (a higher base rate), which is why its numbers look better; they check that the pipeline works, not real-world accuracy. The 60- and 90-day models also learn from 31 January (a row with under 60 days of history), because their labels need a long observed window. A transparent history rule backs the models: a repeat offender is raised to High in every window and the band says so (`band_source: escalated`). The three models are separate, so a longer window can come out lower than a shorter one; the screen then says so instead of changing the number.
-
-Backend tests: 527 passing (run with no network access), coverage 97% of `backend/`. Frontend: unit tests plus a real-Chrome end-to-end run.
-
-## Responsible AI
-
-- **Human in the loop.** Every decision needs a signed-in person and a written reason. No endpoint denies a claim or blocks a payment. Messages to providers and members are drafts only; approving one marks it "sent (simulated)".
-- **Investigation risk, not fraud probability.** The model outputs how likely a confirmed *investigation* is. The words "fraud probability" never appear in the code or screens (a test scans for it), and the wording says "suspicious" or "warrants review", never that anyone is guilty.
-- **Evidence for everything.** Each finding carries evidence IDs (claim IDs); each statement in a brief cites an evidence key; the screens link every key to its claim rows Every evidence item also names the type of check that found it (for example "Duplicate billing (claim rule)", "Provider profile anomaly (anomaly model)" or "Referral ring (network analysis)"), in the brief, on the evidence screen and in the case report. A brief that leaves it out is rejected.
-- **Masking before any LLM call.** Only an allow-listed, masked copy of the evidence leaves the server (names and IDs become placeholders such as `PERSON_1`); a leak check blocks the call if anything slips through, and the real values are restored only after the reply is validated.
-- **Validated, with a safe fallback.** A reply with an unknown citation, a missing section, changed confidence text or accusatory wording is rejected, retried once with the validator's message, and then replaced by the built-in template. A 429 or timeout is retried once; accepted briefs are cached, so a demo does not depend on the LLM being up.
-- **Minimal-content emails.** Only urgent cases email the SIU team, one per case per 24 hours, containing just the case ID, rank, detector count and a link. A validator blocks any body with names, member or claim IDs, amounts, scores or accusatory words.
-- **Append-only audit.** Decisions, overrides, assignments, logins, refused attempts, downloads, drafts and email attempts are written to a log the database itself refuses to edit or delete.
-- **Role-based access in the API.** Admin, team lead and investigator permissions are enforced by the API (the screens only reflect them), and every refusal is audited.
-
-## Known limitations
-
-- **Synthetic data only.** The scenarios are planted by a generator, so results show the pipeline works, not how it would perform on real claims.
-- **Small history.** About 40 providers and 300 members, so the risk model has few positives; the history rule backs it up and the metrics are modest.
-- **Thin 60- and 90-day models.** They exist and are shown, but with a six-month history they learn from very few positives (the 90-day model has only two cut-offs to learn and test on). Treat them as demonstrations of the pipeline.
-- **Demo-grade sign-in.** Real bcrypt passwords, signed tokens and API-enforced roles, but no password reset, no token revocation list and no multi-factor sign-in.
-- **LLM output varies.** A reply that breaks the rules falls back to the template, and a provider's rate limit can delay a brief. Only Groq was tested live; Claude and Grok are covered by mocks and SDK-level tests.
-- **Outbound messages are simulated.** Nothing is ever sent to a provider or member.
-- **Email needs AWS.** Urgent-case emails need your own SNS topic and credentials; without them everything else still works.
-
-## Configuration
-
-Copy `.env.example` to `.env` (git-ignored). Every variable is listed there with a one-line comment and an empty value.
-
-- **LLM briefs (optional).** Set `LLM_PROVIDER` to `groq`, `xai` or `anthropic` and `LLM_API_KEY`. With the default (`none`) the built-in template writes the briefs. `POST /admin/prewarm-briefs?top=5` (admin) writes and stores the top briefs ahead of time.
-- **Urgent-case email (optional).** Set `NOTIFY_EMAIL_ENABLED=true`, `SNS_TOPIC_ARN`, `AWS_REGION`, `APP_BASE_URL` and AWS credentials with `sns:Publish` on that topic. An admin can check the channel from System → Send test email.
+## Roles and permissions
 
 | Action | admin | team lead (own unit) | investigator |
 |---|---|---|---|
@@ -162,32 +109,118 @@ Copy `.env.example` to `.env` (git-ignored). Every variable is listed there with
 | Decide, override priority, draft and approve messages | no | yes | assigned cases only |
 | Download a case report (PDF) | yes | unit cases | assigned cases only |
 | Download a unit report (PDF/CSV), see workload | yes | own unit | no |
-| Rerun, prewarm, test email, manage users and units | yes | no | no |
+| Rerun, prewarm briefs, test email, manage users and units | yes | no | no |
 
-Cases are routed after each run to the unit covering the main provider's city (Unit South: Chennai, Bengaluru, Hyderabad; Unit North: Delhi, Mumbai, Kolkata). A case no unit covers is "unrouted" and only the admin sees it. Reports carry a confidentiality footer on every page.
+Cases are routed to the unit covering the main provider's city: Unit South (Chennai, Bengaluru, Hyderabad) or Unit North (Delhi, Mumbai, Kolkata). A case no unit covers is "unrouted" and only the admin sees it. Every refusal returns 403 and is audited.
+
+## Detection approaches
+
+| Approach | Type | What it catches |
+|---|---|---|
+| Duplicate billing | Claim rule | Same member, provider, code and date billed twice |
+| Unbundling | Claim rule | A panel's components billed separately for more than the panel costs |
+| Upcoding | Claim rule | Top consultation level billed far more than peers (guarded for honest busy specialists) |
+| Billing during a hospital stay | Claim rule | Services billed while the member was an inpatient elsewhere |
+| Excess utilization | Claim rule | Implausibly many sessions per member per month |
+| Impossible timing | Claim rule | A member at two far-apart facilities in one day, or a provider billing over 24 hours in a day |
+| Repeat investigation history | Claim rule | A provider with a confirmed past case whose volume is rising again |
+| Provider profile anomaly | Anomaly model (Isolation Forest) | Providers whose overall profile is unusual against same-specialty peers |
+| Referral ring | Network analysis (NetworkX + Louvain) | Communities with heavy shared patients and self-referral between related owners |
+| Investigation risk | Gradient Boosting, 30/60/90 days | How likely a confirmed investigation is; shown beside the evidence, never instead of it |
+
+New rules are plug-ins: drop a file into `backend/detect/rules/` and it runs with no engine change; a rule that crashes is skipped and logged.
+
+## Results (synthetic data)
+
+**Planted scenarios.** Every scenario is found and both honest decoys are left alone. Produced by `python -m backend.tests.scenario_report`.
+
+| Planted scenario | Planted | Flagged | Caught by | Case |
+|---|---|---|---|---|
+| Duplicate billing | 20 | 20 | duplicate | CASE-0002, 0004, 0006 … |
+| Unbundled panels | 50 | 50 | unbundling | CASE-0011, 0012 |
+| Phantom services (member in hospital) | 11 | 11 | phantom | CASE-0004 |
+| Over-utilising members | 3 | 3 | utilization | CASE-0003, 0008 |
+| Upcoding provider | 1 | 1 | upcoding | CASE-0003 |
+| Repeat offender (rising volume) | 1 | 1 | repeat_history; 30-day band High | CASE-0005 |
+| Impossible timing (30 hours in a day) | 1 | 1 | impossible_timing | CASE-0014 |
+| Referral ring (self-referring owners) | 5 | 5 | ring, anomaly | CASE-0001 |
+| Honest busy specialist (must not be flagged) | 1 | 0 | none (correct) | none |
+| Honest same-day follow-ups (must not be flagged) | 40 | 0 | none (correct) | none |
+
+**Investigation-risk models.** One model per window, each tested alone on its last held-out cut-off (`metrics.json`).
+
+| Window | Train rows / positives | Test rows / positives | Precision at 5 | Precision at 10 | Recall at 0.3 | PR-AUC (base rate) |
+|---|---|---|---|---|---|---|
+| 30 days | 120 / 12 | 40 / 3 | 0.0 | 0.1 | 0.0 | 0.145 (0.075) |
+| 60 days | 120 / 18 | 40 / 8 | 0.6 | 0.6 | 0.375 | 0.642 (0.200) |
+| 90 days | 80 / 15 | 40 / 10 | 0.6 | 0.6 | 0.6 | 0.627 (0.250) |
+
+These check that the pipeline works, not real-world accuracy: 40 providers and six months give each window only a handful of positives. Longer windows look better because more investigations fall inside them. A transparent history rule raises a repeat offender to High in every window and says so (`band_source: escalated`). Case ranking uses the 30-day estimate.
+
+| Quality | Value |
+|---|---|
+| Backend tests | 527 passing, no network access, 97% coverage of `backend/` |
+| Frontend tests | 133 passing, plus a real-Chrome walkthrough (60 checks) |
+| CI | Lint, tests and build on every push |
+
+## Responsible AI
+
+| Principle | How it is enforced |
+|---|---|
+| Human in the loop | Every decision, override and assignment needs a signed-in person and a written reason; no endpoint denies a claim or blocks a payment |
+| Investigation risk, not fraud probability | Models predict a confirmed *investigation*; the words "fraud probability" never appear (a test scans for it); wording is "suspicious" or "warrants review" |
+| Evidence for everything | Findings carry claim IDs; briefs cite `[E#]`; each item names its check type, e.g. "Duplicate billing (claim rule)" |
+| Masking before any LLM call | Only an allow-listed, masked copy leaves the server (`PERSON_1`, `ORG_2`); a leak check blocks the call; real values return only after validation |
+| Validated, with a safe fallback | A brief with an unknown citation, missing section, missing check type or accusatory wording is rejected, retried once, then replaced by the template |
+| Minimal-content email | Urgent cases only, one per case per 24 h, with just the case ID, rank, detector count and link |
+| No unapproved outbound messages | Drafts only; approval marks them "sent (simulated)" |
+| Append-only audit | The database refuses edits and deletes; refusals and downloads are logged |
+| Role-based access in the API | Permissions are enforced server-side; screens only reflect them |
+
+## Configuration
+
+Copy `.env.example` to `.env` (git-ignored). Every setting is listed there, empty, with a one-line comment.
+
+| Setting | Needed for |
+|---|---|
+| `JWT_SECRET`, `DEMO_PASSWORD` | Running the app (required) |
+| `LLM_PROVIDER` (`groq`, `xai`, `anthropic`; default `none`), `LLM_API_KEY`, `LLM_MODEL` | AI-written briefs; without them the template writes every brief |
+| `NOTIFY_EMAIL_ENABLED`, `SNS_TOPIC_ARN`, `AWS_REGION`, `APP_BASE_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Urgent-case email through AWS SNS (key needs only `sns:Publish` on the topic) |
+| `CLAIMSHIELD_AUDIT_PATH`, `VITE_API_URL` | Optional: another audit file; another API address for the web app |
+
+## Known limitations
+
+| Limitation | Detail |
+|---|---|
+| Synthetic data only | Results show the pipeline works, not performance on real claims |
+| Small history | About 40 providers and 300 members, so the models have few positives; the 90-day model has only two cut-offs to learn and test on |
+| Demo-grade sign-in | bcrypt passwords, signed tokens and server-side roles, but no password reset, token revocation or multi-factor sign-in |
+| LLM output varies | A reply that breaks the rules falls back to the template; only Groq was tested live, Claude and Grok through mocks |
+| Outbound messages simulated | Nothing is sent to a provider or member |
+| Email needs AWS | Without your own SNS topic and credentials, everything else still works |
+| Rules need a developer | A rule is a Python file; thresholds live in it |
 
 ## Tech stack
 
 | Layer | Used |
 |---|---|
-| Backend | Python 3.11, FastAPI, Pydantic, SQLite, pandas, scikit-learn (Isolation Forest, Gradient Boosting), NetworkX and python-louvain, bcrypt and PyJWT, reportlab, boto3 (SNS), anthropic and openai SDKs |
-| Frontend | React 19, Vite, Tailwind CSS, Recharts, react-force-graph-2d, React Router, axios |
-| Tests and quality | pytest (+ pytest-cov), ruff, Vitest and React Testing Library, oxlint, a Playwright-driven Chrome walkthrough, GitHub Actions |
+| Backend | Python 3.11, FastAPI, Pydantic, SQLite, pandas, scikit-learn, NetworkX, python-louvain, bcrypt, PyJWT, reportlab, boto3, anthropic and openai SDKs |
+| Frontend | React 19, Vite, Tailwind CSS, Recharts, react-force-graph-2d, React Router, axios; light and dark themes |
+| Quality | pytest and pytest-cov, ruff, Vitest and React Testing Library, oxlint, Playwright-driven Chrome, GitHub Actions |
 
-```
-backend/
-  data/        synthetic data generator (seed 42) and reference data
-  detect/      rules (plug-ins in rules/), anomaly model, referral graph
-  features/    provider features
-  predict/     30-day investigation risk model
-  cases/       case building, ranking and capacity scheduling
-  brief/       evidence packs, template, validator, masking, LLM integration
-  notify/      in-app notifications, SNS email, outbound drafts
-  access/      users, units, permissions, routing, tokens
-  api/         FastAPI app, dependencies, scoped views
-  reports/     case and unit PDF/CSV reports
-  demo_reset.py   make reset
-  tests/       pytest suite (no network, outside services mocked) and scenario_report.py
-frontend/      React app, unit tests and e2e/flow.mjs
-docs/          DEMO.md (demo checklist) and TESTING.md (what each test proves)
-```
+## Project structure
+
+| Path | Contents |
+|---|---|
+| `backend/data/` | Synthetic data generator (seed 42) and reference data |
+| `backend/detect/` | Rule engine and plug-in rules (`rules/`), anomaly model, referral graph |
+| `backend/features/`, `backend/predict/` | Provider features; 30/60/90-day risk models |
+| `backend/cases/` | Case building, ranking, capacity scheduling |
+| `backend/brief/` | Evidence packs, template, validator, masking, LLM calls, check-type labels |
+| `backend/notify/` | In-app notifications, SNS email, outbound drafts |
+| `backend/access/` | Users, units, permissions, routing, tokens |
+| `backend/api/`, `backend/reports/` | FastAPI app and views; PDF and CSV reports |
+| `backend/tests/` | Test suite and `scenario_report.py` |
+| `backend/demo_reset.py` | `make reset` |
+| `frontend/` | React app, unit tests, `e2e/flow.mjs` |
+| `docs/` | `DEMO.md` (checklist, offline fallback, rule demo), `TESTING.md` (what each test proves), `demo/weekend_billing.py` (demo rule) |
