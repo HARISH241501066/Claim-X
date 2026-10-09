@@ -9,6 +9,7 @@ Nothing here can stop a pipeline run: the caller wraps it, and email failures ar
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -31,6 +32,13 @@ PENDING_AFTER = timedelta(days=3)
 class AlertResult:
     created: list[dict] = field(default_factory=list)
     emails: list[dict] = field(default_factory=list)  # {case_id, email_status} for every attempt
+
+
+def finding_signature(finding: dict) -> str:
+    """A finding's identity by what it says (detector, entity, the claims behind it), not by its
+    running number: adding a rule renumbers later findings, and that must not look like news."""
+    digest = hashlib.sha1("|".join(sorted(finding["evidence_ids"])).encode()).hexdigest()[:12]
+    return f"{finding['detector']}:{finding['entity_id']}:{digest}"
 
 
 def _parse(stamp: str) -> datetime:
@@ -101,7 +109,7 @@ def run_alerts(
 
 def _one_case(case, ranks, decided, store, audit, email, config, now, stamp, result, add) -> None:
     rank = ranks.get(case.case_id, 0)
-    current = {f["finding_id"] for f in case.findings}
+    current = {finding_signature(f) for f in case.findings}
     seen = store.get_seen(case.case_id)
     detectors = len(case.detectors_fired)
     if seen is None:
@@ -111,12 +119,16 @@ def _one_case(case, ranks, decided, store, audit, email, config, now, stamp, res
             f"detectors agree, queue rank {rank}.", f"new_case:{case.case_id}")  # fmt: skip
         store.put_seen(case.case_id, sorted(current), stamp)
     else:
-        added = sorted(current - seen["finding_ids"])
+        known = seen["finding_ids"]
+        if any(item.startswith("FND-") for item in known):  # recorded by number before: switch quietly
+            store.put_seen(case.case_id, sorted(current))
+            known = current
+        added = sorted(current - known)
         if added:
             add("siu", "new_finding", "warning", case.case_id,
                 f"{len(added)} new finding(s) on {case.case_id}.",
                 f"new_finding:{case.case_id}:{','.join(added)}")  # fmt: skip
-        if added or current != seen["finding_ids"]:
+        if added or current != known:
             store.put_seen(case.case_id, sorted(current))
         if case.case_id not in decided and now - _parse(seen["first_seen"]) > PENDING_AFTER:
             add("manager", "decision_pending", "warning", case.case_id,

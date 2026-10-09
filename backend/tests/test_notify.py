@@ -88,7 +88,8 @@ def test_a_new_finding_on_a_known_case_creates_a_warning(shared, parts):
     run(shared, parts)
     store, _ = parts
     case = shared.cases[0]
-    store.put_seen(case.case_id, sorted(case.finding_ids)[1:])  # as if the last run knew one fewer
+    known = sorted(alerts.finding_signature(f) for f in case.findings)
+    store.put_seen(case.case_id, known[1:])  # as if the last run knew one fewer
     result = run(shared, parts, now=T0 + timedelta(hours=1))
     found = [n for n in result.created if n["type"] == "new_finding"]
     assert len(found) == 1 and found[0]["severity"] == "warning" and found[0]["case_id"] == case.case_id
@@ -487,3 +488,15 @@ def test_aws_keys_kept_in_dot_env_are_passed_to_the_client_without_being_logged(
     seen.clear()
     SnsEmailNotifier(CONFIG).send(notifier.Message("s", "b"))
     assert "aws_access_key_id" not in seen  # half a key pair is ignored; boto3's usual sources apply
+
+
+def test_renumbered_findings_are_not_new_findings_and_old_records_are_converted_quietly(shared, parts):
+    run(shared, parts)
+    store, _ = parts
+    case = shared.cases[0]
+    renumbered = [{**f, "finding_id": "FND-9" + f["finding_id"][4:]} for f in case.findings]  # a rule was added above
+    assert {alerts.finding_signature(f) for f in renumbered} == {alerts.finding_signature(f) for f in case.findings}
+    store.put_seen(case.case_id, sorted(case.finding_ids))  # a record kept the old way, by number
+    again = run(shared, parts, now=T0 + timedelta(hours=1))
+    assert not [n for n in again.created if n["type"] == "new_finding"]  # converted without an alert
+    assert all(not s.startswith("FND-") for s in store.get_seen(case.case_id)["finding_ids"])
