@@ -61,6 +61,8 @@ from backend.pipeline import PipelineError, PipelineState
 log = logging.getLogger("claimshield.api")
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 VITE_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+# Vite moves to the next port (5174, 5175 ...) when 5173 is busy; any local dev port 5173-5199 may call the API
+DEV_ORIGIN_PATTERN = r"^http://(localhost|127\.0\.0\.1):51[7-9]\d$"
 DEFAULT_CAPACITY_HOURS = 40.0
 PREWARM_PAUSE_SECONDS = 2.0  # between prewarm calls that reached the LLM, to respect rate limits
 RETRY_AFTER_SECONDS = 60.0  # how long a failed LLM attempt's template is reused before trying again
@@ -192,7 +194,7 @@ def create_app(
     )
     app.state.runtime = runtime
     app.add_middleware(
-        CORSMiddleware, allow_origins=VITE_ORIGINS, allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+        CORSMiddleware, allow_origins=VITE_ORIGINS, allow_origin_regex=DEV_ORIGIN_PATTERN, allow_methods=["GET", "POST", "PUT", "OPTIONS"],
         allow_headers=["*"], expose_headers=["Content-Disposition"],
     )  # fmt: skip
 

@@ -535,3 +535,8 @@ def test_cors_allows_only_the_vite_origin(client):
     assert "access-control-allow-origin" not in other.headers
     same = client.get("/health", headers={"Origin": "http://127.0.0.1:5173"})
     assert same.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+    moved = client.get("/health", headers={"Origin": "http://localhost:5174"})  # Vite picked the next port
+    assert moved.headers["access-control-allow-origin"] == "http://localhost:5174"
+    for bad in ("http://localhost:3000", "http://localhost:8000", "http://localhost:51740", "https://localhost:5173",
+                "http://localhost.evil.example:5173"):  # fmt: skip
+        assert "access-control-allow-origin" not in client.get("/health", headers={"Origin": bad}).headers, bad
