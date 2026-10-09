@@ -17,7 +17,7 @@ export function PriorityBar({ priority, aiPriority, override }) {
           {override && (
             <span
               aria-hidden="true"
-              className="absolute top-0 h-full w-0.5 bg-white"
+              className="absolute top-0 h-full w-0.5 bg-ink"
               style={{ left: `${aiPriority * 100}%` }}
             />
           )}

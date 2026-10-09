@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { Bar, BarChart, CartesianGrid, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { RULE_LABELS } from '../lib/labels'
-import { COLORS } from '../theme'
+import { useThemeColors } from '../lib/themeContext'
 import { Button } from './ui'
 
 function ChartTooltip({ active, payload }) {
   if (!active || !payload?.length) return null
   const { label, count } = payload[0].payload
   return (
-    <div className="rounded-md border border-axis bg-surface-2 px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-md border border-axis bg-surface-2 px-3 py-2 text-xs shadow-[var(--shadow-pop)]">
       <p className="font-medium text-ink">{label}</p>
       <p className="text-ink-2">
         {count} {count === 1 ? 'finding' : 'findings'}
@@ -20,6 +20,7 @@ function ChartTooltip({ active, payload }) {
 /** Findings per detector as thin horizontal bars, with a table view for assistive tech. */
 export default function FindingsChart({ data }) {
   const [asTable, setAsTable] = useState(false)
+  const { colors: COLORS } = useThemeColors()
   const rows = Object.entries(data ?? {})
     .map(([rule, count]) => ({ rule, label: RULE_LABELS[rule] ?? rule, count }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
@@ -71,7 +72,7 @@ export default function FindingsChart({ data }) {
                 axisLine={{ stroke: COLORS.axis }}
                 tickLine={false}
               />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+              <Tooltip content={<ChartTooltip />} cursor={{ fill: COLORS.cursor }} />
               <Bar dataKey="count" fill={COLORS.accent} radius={[0, 4, 4, 0]} barSize={18} isAnimationActive={false}>
                 <LabelList dataKey="count" position="right" fill={COLORS.ink2} fontSize={12} />
               </Bar>

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ForceGraph2D from 'react-force-graph-2d'
-import { COLORS, NODE_COLORS, NODE_LABELS } from '../theme'
+import { useThemeColors } from '../lib/themeContext'
+import { NODE_LABELS } from '../theme'
 
 const HEIGHT = 420
 const NODE_SIZE = { provider: 5, facility: 5, owner: 5, member: 2, member_group: 8 }
 
-function Legend({ types }) {
+function Legend({ types, COLORS, NODE_COLORS }) {
   return (
     <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-2" aria-label="Legend">
       {types.map((t) => (
@@ -28,6 +29,7 @@ function Legend({ types }) {
 
 /** The case network: nodes coloured by type, suspicious links red, plus a table view. */
 export default function NetworkGraph({ graph }) {
+  const { colors: COLORS, nodeColors: NODE_COLORS } = useThemeColors()
   const wrap = useRef(null)
   const fg = useRef(null)
   const [width, setWidth] = useState(640)
@@ -68,7 +70,7 @@ export default function NetworkGraph({ graph }) {
           nodeColor={(n) => NODE_COLORS[n.type] ?? COLORS.muted}
           nodeVal={(n) => NODE_SIZE[n.type] ?? 3}
           nodeRelSize={4}
-          linkColor={(l) => (l.suspicious ? COLORS.flag : '#4a4a46')}
+          linkColor={(l) => (l.suspicious ? COLORS.flag : COLORS.link)}
           linkWidth={(l) => (l.suspicious ? 2 : 1)}
           nodeCanvasObjectMode={() => 'after'}
           nodeCanvasObject={(node, ctx) => {
@@ -84,7 +86,7 @@ export default function NetworkGraph({ graph }) {
           onEngineStop={() => fg.current?.zoomToFit?.(300, 40)}
         />
       </div>
-      <Legend types={types} />
+      <Legend types={types} COLORS={COLORS} NODE_COLORS={NODE_COLORS} />
       <details className="mt-3 text-xs text-ink-2">
         <summary className="cursor-pointer text-ink">Table view ({graph.nodes.length} nodes, {graph.links.length} links)</summary>
         <div className="mt-2 grid gap-4 md:grid-cols-2">

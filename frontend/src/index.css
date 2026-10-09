@@ -1,47 +1,149 @@
 @import "tailwindcss";
 
-/* Dark professional theme. Values follow the validated dark palette so charts and badges
-   keep their contrast; src/theme.js mirrors them for canvas and SVG drawing. */
-@theme {
-  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --color-page: #0d0d0d;
-  --color-surface: #1a1a19;
-  --color-surface-2: #232321;
-  --color-line: #2c2c2a;
-  --color-axis: #383835;
-  --color-ink: #ffffff;
-  --color-ink-2: #c3c2b7;
-  --color-muted: #898781;
-  --color-accent: #3987e5;
-  --color-accent-dim: #184f95;
-  --color-orange: #d95926;
-  --color-aqua: #199e70;
-  --color-good: #0ca30c;
-  --color-warn: #fab219;
-  --color-serious: #ec835a;
-  --color-critical: #d03b3b;
-  --color-flag: #e66767;
+/* Two themes share one set of runtime tokens (--c-*). The dark values are the defaults and
+   the original palette; [data-theme="light"] overrides them. src/theme.js mirrors both
+   palettes for canvas and SVG drawing, where CSS variables cannot reach. */
+:root {
+  --c-page: #0d0d0d;
+  --c-surface: #1a1a19;
+  --c-surface-2: #232321;
+  --c-line: #2c2c2a;
+  --c-axis: #383835;
+  --c-ink: #ffffff;
+  --c-ink-2: #c3c2b7;
+  --c-muted: #898781;
+  --c-accent: #3987e5;
+  --c-accent-dim: #184f95;
+  --c-orange: #d95926;
+  --c-aqua: #199e70;
+  --c-good: #0ca30c;
+  --c-warn: #fab219;
+  --c-serious: #ec835a;
+  --c-critical: #d03b3b;
+  --c-flag: #e66767;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-pop: 0 12px 32px rgb(0 0 0 / 0.55);
+  --glow-1: rgb(57 135 229 / 0.16);
+  --glow-2: rgb(25 158 112 / 0.08);
+  color-scheme: dark;
 }
 
-html {
-  color-scheme: dark;
+:root[data-theme="light"] {
+  --c-page: #f4f5f8;
+  --c-surface: #ffffff;
+  --c-surface-2: #eef0f4;
+  --c-line: #e1e4ea;
+  --c-axis: #c4c9d3;
+  --c-ink: #11141a;
+  --c-ink-2: #41464f;
+  --c-muted: #666d7a;
+  --c-accent: #1d62d4;
+  --c-accent-dim: #a9c4f0;
+  --c-orange: #c2410c;
+  --c-aqua: #0b8660;
+  --c-good: #12782f;
+  --c-warn: #8f5b00;
+  --c-serious: #b0400d;
+  --c-critical: #c62828;
+  --c-flag: #c62828;
+  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.06), 0 1px 3px rgb(16 24 40 / 0.05);
+  --shadow-pop: 0 12px 32px rgb(16 24 40 / 0.16);
+  --glow-1: rgb(29 98 212 / 0.10);
+  --glow-2: rgb(11 134 96 / 0.06);
+  color-scheme: light;
+}
+
+@theme inline {
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --color-page: var(--c-page);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-line: var(--c-line);
+  --color-axis: var(--c-axis);
+  --color-ink: var(--c-ink);
+  --color-ink-2: var(--c-ink-2);
+  --color-muted: var(--c-muted);
+  --color-accent: var(--c-accent);
+  --color-accent-dim: var(--c-accent-dim);
+  --color-orange: var(--c-orange);
+  --color-aqua: var(--c-aqua);
+  --color-good: var(--c-good);
+  --color-warn: var(--c-warn);
+  --color-serious: var(--c-serious);
+  --color-critical: var(--c-critical);
+  --color-flag: var(--c-flag);
 }
 
 body {
   margin: 0;
-  background: var(--color-page);
-  color: var(--color-ink-2);
+  min-height: 100vh;
+  background-color: var(--c-page);
+  background-image:
+    radial-gradient(60rem 28rem at 8% -10%, var(--glow-1), transparent 70%),
+    radial-gradient(48rem 24rem at 100% 0%, var(--glow-2), transparent 70%);
+  background-repeat: no-repeat;
+  color: var(--c-ink-2);
   font-family: var(--font-sans);
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Colour changes ease in when the theme flips, but not on first paint. */
+html.theme-ready body,
+html.theme-ready .themed {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--c-accent) 35%, transparent);
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--c-accent);
   outline-offset: 2px;
+  border-radius: 4px;
 }
 
 input[type="range"] {
-  accent-color: var(--color-accent);
+  accent-color: var(--c-accent);
+}
+
+/* Native form controls follow the theme and get a consistent focus treatment. */
+input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--c-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--c-accent) 25%, transparent);
+  outline: none;
+}
+
+/* Thin, theme-aware scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-axis) transparent;
+}
+
+/* Gentle entrance for each screen. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise-in {
+  animation: rise-in 0.28s ease-out both;
 }
 
 @media (prefers-reduced-motion: reduce) {

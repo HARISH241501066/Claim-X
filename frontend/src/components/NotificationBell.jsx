@@ -122,7 +122,7 @@ export default function NotificationBell() {
           aria-haspopup="true"
           aria-label={`Notifications, ${unread} unread`}
           data-testid="bell"
-          className="relative rounded-md border border-axis bg-surface-2 p-2 text-ink hover:border-accent"
+          className="relative rounded-md border border-axis bg-surface-2 p-2 text-ink transition-colors hover:border-accent hover:text-accent"
         >
           <BellIcon />
           {unread > 0 && (
@@ -141,7 +141,7 @@ export default function NotificationBell() {
           role="region"
           aria-label="Notifications"
           data-testid="notification-panel"
-          className="absolute right-0 z-30 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-line bg-surface p-3 shadow-lg"
+          className="absolute right-0 z-30 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-line bg-surface p-3 shadow-[var(--shadow-pop)]"
         >
           <div className="mb-2 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-ink">Notifications</h2>

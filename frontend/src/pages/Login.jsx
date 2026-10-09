@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { errorMessage } from '../api'
+import ThemeToggle from '../components/ThemeToggle'
 import { Button } from '../components/ui'
 import { useAuth } from '../lib/authContext'
 import { HOME } from '../lib/roles'
 
-const field = 'mt-1 w-full rounded-md border border-axis bg-page px-2 py-2 text-sm text-ink placeholder:text-muted'
+const field = 'mt-1 w-full rounded-lg border border-axis bg-page px-3 py-2.5 text-sm text-ink placeholder:text-muted'
 
 export default function Login() {
   const { user, signIn, notice } = useAuth()
@@ -35,8 +36,9 @@ export default function Login() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-xl border border-line bg-surface p-6" aria-labelledby="login-title">
+    <main className="relative flex min-h-screen items-center justify-center px-4">
+      <ThemeToggle className="absolute right-4 top-4" />
+      <form onSubmit={submit} className="rise-in themed w-full max-w-sm rounded-2xl border border-line bg-surface p-7 shadow-[var(--shadow-pop)]" aria-labelledby="login-title">
         <h1 id="login-title" className="text-lg font-semibold text-ink">
           ClaimShield Nexus
         </h1>

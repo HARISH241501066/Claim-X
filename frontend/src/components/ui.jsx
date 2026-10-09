@@ -65,7 +65,7 @@ export function Card({ title, subtitle, actions, children, className = '', id, .
   return (
     <section
       id={id}
-      className={`rounded-xl border border-line bg-surface ${className}`}
+      className={`themed rounded-xl border border-line bg-surface shadow-[var(--shadow-card)] ${className}`}
       aria-label={typeof title === 'string' ? title : undefined}
       {...rest}
     >
@@ -85,9 +85,9 @@ export function Card({ title, subtitle, actions, children, className = '', id, .
 
 export function Button({ variant = 'default', className = '', ...props }) {
   const styles = {
-    default: 'border-axis bg-surface-2 text-ink hover:border-accent',
-    primary: 'border-accent bg-accent text-white hover:bg-accent/90',
-    quiet: 'border-transparent text-ink-2 hover:bg-surface-2',
+    default: 'border-axis bg-surface-2 text-ink hover:border-accent hover:text-accent active:translate-y-px',
+    primary: 'border-accent bg-accent text-white shadow-sm hover:bg-accent/90 active:translate-y-px',
+    quiet: 'border-transparent text-ink-2 hover:bg-surface-2 hover:text-ink',
   }
   return (
     <button
@@ -111,7 +111,7 @@ export function InfoTip({ text, label = 'More information' }) {
       </button>
       <span
         role="tooltip"
-        className="invisible absolute right-0 top-6 z-30 w-72 rounded-md border border-axis bg-surface-2 p-3 text-xs leading-relaxed text-ink-2 shadow-lg group-focus-within:visible group-hover:visible"
+        className="invisible absolute right-0 top-6 z-30 w-72 rounded-md border border-axis bg-surface-2 p-3 text-xs leading-relaxed text-ink-2 shadow-[var(--shadow-pop)] group-focus-within:visible group-hover:visible"
       >
         {text}
       </span>
