@@ -22,7 +22,7 @@ class EmailBlocked(ValueError):
 
 
 def build_email(case_id: str, rank: int, detectors: int, base_url: str) -> tuple[str, str]:
-    subject = f"ClaimShield: high-priority case {case_id} awaiting review"
+    subject = f"Claim-X: high-priority case {case_id} awaiting review"
     body = (
         "A case is awaiting human review.\n"
         f"Case: {case_id}\n"
@@ -53,5 +53,5 @@ def validate_email(subject: str, body: str, case_id: str, rank: int, detectors: 
         raise EmailBlocked("the text names a case other than the one it is about")
 
 
-TEST_SUBJECT = "ClaimShield: test email"
-TEST_BODY = "This is a test message from ClaimShield. It contains no case data.\n"
+TEST_SUBJECT = "Claim-X: test email"
+TEST_BODY = "This is a test message from Claim-X. It contains no case data.\n"

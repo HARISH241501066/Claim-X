@@ -25,7 +25,7 @@ SKIP_DIRS = {".venv", "node_modules", ".git", "__pycache__", ".pytest_cache", ".
 
 @pytest.fixture(scope="module")
 def shared(tmp_path_factory):
-    return pipeline.run_all(tmp_path_factory.mktemp("m10") / "claimshield.db")
+    return pipeline.run_all(tmp_path_factory.mktemp("m10") / "claimx.db")
 
 
 def tracked_files() -> list[Path]:

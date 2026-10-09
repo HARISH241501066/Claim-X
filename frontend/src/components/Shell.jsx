@@ -54,7 +54,7 @@ export default function Shell() {
         <div className="flex items-center gap-3 px-5 py-5">
           <Logo />
           <div className="min-w-0">
-            <p className="text-base font-semibold leading-tight tracking-tight text-ink">ClaimShield Nexus</p>
+            <p className="text-base font-semibold leading-tight tracking-tight text-ink">Claim-X</p>
             <p className="mt-0.5 text-xs text-muted">Review workbench · synthetic data</p>
           </div>
         </div>

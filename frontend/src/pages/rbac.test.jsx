@@ -77,7 +77,7 @@ beforeEach(() => {
 describe('signing in', () => {
   it('sends someone who is not signed in to the login page', async () => {
     open('/queue')
-    expect(await screen.findByRole('heading', { name: 'ClaimShield Nexus' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Claim-X' })).toBeInTheDocument()
     expect(screen.getByLabelText('Username')).toBeInTheDocument()
     expect(api.getQueue).not.toHaveBeenCalled()
   })

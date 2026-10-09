@@ -34,7 +34,7 @@ BANNED = ("fraud probability", "fraudster", "guilty")
 
 @pytest.fixture(scope="module")
 def shared(tmp_path_factory):
-    return pipeline.run_all(tmp_path_factory.mktemp("m9c") / "claimshield.db")
+    return pipeline.run_all(tmp_path_factory.mktemp("m9c") / "claimx.db")
 
 
 class World:

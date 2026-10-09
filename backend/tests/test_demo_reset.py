@@ -13,7 +13,7 @@ from backend.notify import notifier
 
 @pytest.fixture(scope="module")
 def shared(tmp_path_factory):
-    return pipeline.run_all(tmp_path_factory.mktemp("reset") / "claimshield.db")
+    return pipeline.run_all(tmp_path_factory.mktemp("reset") / "claimx.db")
 
 
 @pytest.fixture

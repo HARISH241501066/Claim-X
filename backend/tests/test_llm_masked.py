@@ -29,7 +29,7 @@ GROQ = {"LLM_PROVIDER": "groq", "LLM_API_KEY": "test-key"}
 
 @pytest.fixture(scope="module")
 def shared(tmp_path_factory):
-    return pipeline.run_all(tmp_path_factory.mktemp("m7b") / "claimshield.db")
+    return pipeline.run_all(tmp_path_factory.mktemp("m7b") / "claimx.db")
 
 
 @pytest.fixture(scope="module")

@@ -24,7 +24,7 @@ from backend.audit import AUDIT_PATH
 from backend.brief.generate import resolve_setting
 from backend.data import generator
 
-log = logging.getLogger("claimshield.reset")
+log = logging.getLogger("claimx.reset")
 ARCHIVE_DIR = BACKEND_DIR / "audit.archive"
 ADMIN = "admin"
 
@@ -67,16 +67,16 @@ def reset(
     regenerate: bool = True,
 ) -> dict:
     """Reset and return a summary: archive location, case counts and the prewarm result."""
-    audit_file = Path(audit_path or os.environ.get("CLAIMSHIELD_AUDIT_PATH") or AUDIT_PATH)
+    audit_file = Path(audit_path or os.environ.get("CLAIMX_AUDIT_PATH") or AUDIT_PATH)
     if len(resolve_setting("JWT_SECRET", None)) < 32 or len(resolve_setting("DEMO_PASSWORD", None)) < 8:
         raise ResetError("Set JWT_SECRET (32+ characters) and DEMO_PASSWORD (8+) in .env first; see .env.example.")
     password = resolve_setting("DEMO_PASSWORD", None)
 
     archived = archive_audit(audit_file, archive_dir)
-    for name in ("claimshield.db", "claimshield.alt.db"):
+    for name in ("claimx.db", "claimx.alt.db"):
         (Path(data_dir) / name).unlink(missing_ok=True)
     if regenerate:
-        generator.generate(Path(data_dir) / "claimshield.db", None)  # the ground truth is for tests only
+        generator.generate(Path(data_dir) / "claimx.db", None)  # the ground truth is for tests only
 
     # the email channel stays off during a reset unless it was asked for
     previous = os.environ.get("NOTIFY_EMAIL_ENABLED")

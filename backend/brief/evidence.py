@@ -15,7 +15,7 @@ from pathlib import Path
 
 from backend.cases.builder import DETECTOR_GROUPS, SEVERITY_ORDER, detector_group
 
-DB_PATH = Path(__file__).resolve().parents[1] / "claimshield.db"
+DB_PATH = Path(__file__).resolve().parents[1] / "claimx.db"
 DEFAULT_HORIZON = 30
 MIN_HISTORY_DAYS = 60
 SAMPLE_CLAIMS = 3  # claim IDs quoted in the brief text; the pack keeps them all

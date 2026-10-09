@@ -15,8 +15,8 @@ from pathlib import Path
 
 from backend.detect.engine import load_findings
 
-log = logging.getLogger("claimshield.cases")
-DB_PATH = Path(__file__).resolve().parents[1] / "claimshield.db"
+log = logging.getLogger("claimx.cases")
+DB_PATH = Path(__file__).resolve().parents[1] / "claimx.db"
 
 STATUS_AWAITING = "Awaiting human review"
 RULES, ANOMALY, GRAPH = "rules", "anomaly", "graph"

@@ -58,7 +58,7 @@ def test_provider_without_levelled_claims_gets_zero_level5_share():
 
 def test_missing_findings_table_is_handled_safely(caplog):
     con = sqlite3.connect(":memory:")
-    with caplog.at_level(logging.WARNING, logger="claimshield.features"):
+    with caplog.at_level(logging.WARNING, logger="claimx.features"):
         assert pf.rule_hit_claims(con) == set()
     assert "Insufficient data" in caplog.text
 

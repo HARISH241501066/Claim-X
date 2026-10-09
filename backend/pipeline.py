@@ -28,8 +28,8 @@ from backend.detect import anomaly, engine, graph
 from backend.features.provider_features import build_provider_features
 from backend.predict import model as risk_model
 
-log = logging.getLogger("claimshield.pipeline")
-DB_PATH = Path(__file__).resolve().parent / "claimshield.db"
+log = logging.getLogger("claimx.pipeline")
+DB_PATH = Path(__file__).resolve().parent / "claimx.db"
 STAGE_NAMES = [
     "data", "rules", "features", "anomaly", "graph", "prediction", "cases", "ranking", "packs",
 ]  # fmt: skip

@@ -20,8 +20,8 @@ import pandas as pd
 
 from backend.cases.builder import DETECTOR_GROUPS, STATUS_AWAITING, Case, build_cases
 
-log = logging.getLogger("claimshield.cases")
-DB_PATH = Path(__file__).resolve().parents[1] / "claimshield.db"
+log = logging.getLogger("claimx.cases")
+DB_PATH = Path(__file__).resolve().parents[1] / "claimx.db"
 
 SEVERITY_SCORE = {"critical": 1.0, "high": 0.75, "medium": 0.5, "low": 0.25}
 PROVIDER_CASE_HOURS = 4.0

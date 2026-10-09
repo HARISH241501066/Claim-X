@@ -24,8 +24,8 @@ from backend.detect.base import Finding
 from backend.detect.engine import append_findings
 from backend.features.provider_features import rule_hit_claims
 
-log = logging.getLogger("claimshield.graph")
-DB_PATH = Path(__file__).resolve().parents[1] / "claimshield.db"
+log = logging.getLogger("claimx.graph")
+DB_PATH = Path(__file__).resolve().parents[1] / "claimx.db"
 
 SEED = 42
 MIN_JACCARD = 0.4  # flag referral pairs above this ...

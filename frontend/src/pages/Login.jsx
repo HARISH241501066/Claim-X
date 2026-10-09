@@ -40,7 +40,7 @@ export default function Login() {
       <ThemeToggle className="absolute right-4 top-4" />
       <form onSubmit={submit} className="rise-in themed w-full max-w-sm rounded-2xl border border-line bg-surface p-7 shadow-[var(--shadow-pop)]" aria-labelledby="login-title">
         <h1 id="login-title" className="text-lg font-semibold text-ink">
-          ClaimShield Nexus
+          Claim-X
         </h1>
         <p className="mt-1 text-xs text-muted">Review workbench · synthetic data. Sign in to continue.</p>
         {notice && (

@@ -1,4 +1,4 @@
-"""ClaimShield Nexus API.
+"""Claim-X API.
 
 The pipeline runs once at startup and its results are served from memory. Everyone signs in; what
 they can see and do depends on their role (admin, team lead, investigator) and unit, and the rules
@@ -58,7 +58,7 @@ from backend.notify.notifier import email_channel, load_config
 from backend.notify.store import NotifyStore
 from backend.pipeline import PipelineError, PipelineState
 
-log = logging.getLogger("claimshield.api")
+log = logging.getLogger("claimx.api")
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 VITE_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 # Vite moves to the next port (5174, 5175 ...) when 5173 is busy; any local dev port 5173-5199 may call the API
@@ -74,7 +74,7 @@ class Runtime:
     """Everything the endpoints share: the served state, the audit log and the caches."""
 
     def __init__(self, data_dir: Path, audit_path: Path, runner: Runner):
-        self.paths = [data_dir / "claimshield.db", data_dir / "claimshield.alt.db"]
+        self.paths = [data_dir / "claimx.db", data_dir / "claimx.alt.db"]
         self.active = 0  # index of the database file the current state was built from
         self.state: PipelineState | None = None
         self.error: str | None = None
@@ -171,8 +171,8 @@ def create_app(
     runner: Runner | None = None,
     seed: Seeder | None = None,
 ) -> FastAPI:
-    # CLAIMSHIELD_AUDIT_PATH lets a demo or test use its own audit file
-    audit_file = Path(audit_path or os.environ.get("CLAIMSHIELD_AUDIT_PATH") or AUDIT_PATH)
+    # CLAIMX_AUDIT_PATH lets a demo or test use its own audit file
+    audit_file = Path(audit_path or os.environ.get("CLAIMX_AUDIT_PATH") or AUDIT_PATH)
     runtime = Runtime(
         Path(data_dir), audit_file, runner or (lambda path: pipeline.run_all(path, team_hours))
     )
@@ -188,7 +188,7 @@ def create_app(
         yield
 
     app = FastAPI(
-        title="ClaimShield Nexus API",
+        title="Claim-X API",
         description="Synthetic-data FWA review workbench. The system recommends; humans decide.",
         lifespan=lifespan,
     )

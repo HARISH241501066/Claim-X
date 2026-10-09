@@ -31,8 +31,8 @@ from backend.predict.dataset import (
     load_inputs,
 )
 
-log = logging.getLogger("claimshield.predict")
-DB_PATH = Path(__file__).resolve().parents[1] / "claimshield.db"
+log = logging.getLogger("claimx.predict")
+DB_PATH = Path(__file__).resolve().parents[1] / "claimx.db"
 METRICS_PATH = Path(__file__).resolve().parents[1] / "metrics.json"
 
 DEFAULT_HORIZON = 30

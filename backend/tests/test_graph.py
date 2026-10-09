@@ -253,7 +253,7 @@ def test_rule_hit_claims_ignore_graph_findings(world, tmp_path):
 def test_missing_upstream_tables_are_logged_not_guessed(world, tmp_path, caplog):
     db = tmp_path / "bare.db"
     gen.generate(db, tmp_path / "t.csv")  # no rules run, no anomaly scores
-    with caplog.at_level(logging.WARNING, logger="claimshield.features"):
+    with caplog.at_level(logging.WARNING, logger="claimx.features"):
         rule_claims, scores = graph.load_signals(db)
     assert rule_claims == set() and scores == {}
     assert "Insufficient data" in caplog.text
@@ -298,7 +298,7 @@ def test_few_members_are_shown_individually(world):
 
 
 def test_subgraph_skips_unknown_ids_and_handles_empty_input(world, caplog):
-    with caplog.at_level(logging.INFO, logger="claimshield.graph"):
+    with caplog.at_level(logging.INFO, logger="claimx.graph"):
         sub = graph.subgraph(world["graph"], ["PRV-A01", "NOPE-1"])
     assert "unknown entity NOPE-1" in caplog.text
     assert [n["id"] for n in sub["nodes"] if n["type"] == "provider"] == ["PRV-A01"]

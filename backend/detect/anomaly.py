@@ -22,8 +22,8 @@ from backend.detect.base import Finding
 from backend.detect.engine import append_findings
 from backend.features.provider_features import FEATURES, build_provider_features
 
-log = logging.getLogger("claimshield.anomaly")
-DB_PATH = Path(__file__).resolve().parents[1] / "claimshield.db"
+log = logging.getLogger("claimx.anomaly")
+DB_PATH = Path(__file__).resolve().parents[1] / "claimx.db"
 SEED = 42
 N_ESTIMATORS = 200
 CONTAMINATION = 0.05

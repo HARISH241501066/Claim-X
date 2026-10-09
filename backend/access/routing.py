@@ -13,7 +13,7 @@ from pathlib import Path
 
 from backend.access.store import AccessStore
 
-log = logging.getLogger("claimshield.access")
+log = logging.getLogger("claimx.access")
 MARKS = 500
 
 

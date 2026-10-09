@@ -9,7 +9,7 @@ import pandas as pd
 from backend.detect.base import Finding, Rule
 from backend.detect.context import Context
 
-log = logging.getLogger("claimshield.detect.repeat_history")
+log = logging.getLogger("claimx.detect.repeat_history")
 RECENT_MONTHS = 2
 MIN_PRIOR_MONTHS = 3
 MIN_RATIO = 1.5  # recent monthly volume versus the earlier monthly average

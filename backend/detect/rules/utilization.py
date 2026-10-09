@@ -9,7 +9,7 @@ import pandas as pd
 from backend.detect.base import Finding, Rule
 from backend.detect.context import Context
 
-log = logging.getLogger("claimshield.detect.utilization")
+log = logging.getLogger("claimx.detect.utilization")
 P95_MULTIPLIER = 2.0
 
 

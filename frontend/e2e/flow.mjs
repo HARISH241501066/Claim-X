@@ -1,5 +1,5 @@
 // End-to-end check in a real Chrome, signing in as each seeded role: admin, team lead, investigator.
-// It expects the API (with CLAIMSHIELD_AUDIT_PATH set to a throwaway file, DEMO_PASSWORD and
+// It expects the API (with CLAIMX_AUDIT_PATH set to a throwaway file, DEMO_PASSWORD and
 // JWT_SECRET set) and the Vite dev server to be running. DEMO_PASSWORD is read from the environment
 // or the repo-root .env and is never printed. It fails if the browser console shows an unexpected
 // error or warning.
@@ -107,7 +107,7 @@ try {
   await signIn('south_lead', 'definitely-not-the-password')
   await page.waitForSelector('[data-testid=login-error]')
   check('a wrong password shows the API message and keeps the field empty', /Wrong username or password/.test(await page.textContent('[data-testid=login-error]')) && (await page.getByLabel('Password').inputValue()) === '')
-  check('no token is stored after a wrong password', (await page.evaluate(() => window.sessionStorage.getItem('claimshield.token'))) === null)
+  check('no token is stored after a wrong password', (await page.evaluate(() => window.sessionStorage.getItem('claimx.token'))) === null)
 
   // ---------------------------------------------------------------- admin
   await signIn('admin')
@@ -142,7 +142,7 @@ try {
   check('"Send test email" shows a result', /Success\.|Not sent\./.test(await page.textContent('[data-testid=task-result]')), (await page.textContent('[data-testid=task-result]')).trim())
   await shot('2-admin-system')
   await signOut()
-  check('signing out ends the session', (await page.evaluate(() => window.sessionStorage.getItem('claimshield.token'))) === null)
+  check('signing out ends the session', (await page.evaluate(() => window.sessionStorage.getItem('claimx.token'))) === null)
 
   // ---------------------------------------------------------------- team lead
   await signIn('south_lead')

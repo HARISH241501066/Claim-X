@@ -177,7 +177,7 @@ def test_small_specialty_falls_back_to_all_providers():
 
 def test_too_little_data_produces_no_scores_and_logs(caplog):
     tiny = synthetic_features({}).iloc[:5]
-    with caplog.at_level(logging.WARNING, logger="claimshield.anomaly"):
+    with caplog.at_level(logging.WARNING, logger="claimx.anomaly"):
         result = anomaly.analyze(tiny, pd.DataFrame({"claim_id": ["C"], "provider_id": ["P0"]}))
     assert result.scores.empty and result.findings == []
     assert "Insufficient data" in caplog.text
@@ -187,6 +187,6 @@ def test_missing_feature_values_produce_no_scores(caplog):
     df = pd.concat([synthetic_features({})] * 3)
     df.index = [f"P{i}" for i in range(len(df))]
     df.iloc[0, df.columns.get_loc("claims_per_day")] = np.nan
-    with caplog.at_level(logging.WARNING, logger="claimshield.anomaly"):
+    with caplog.at_level(logging.WARNING, logger="claimx.anomaly"):
         assert anomaly.score_providers(df) is None
     assert "Insufficient data" in caplog.text

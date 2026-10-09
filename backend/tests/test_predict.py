@@ -204,7 +204,7 @@ def test_no_positives_means_insufficient_data_not_a_guess(pipeline, tmp_path, ca
     con.execute("DELETE FROM investigations WHERE outcome = 'confirmed'")
     con.commit()
     con.close()
-    with caplog.at_level(logging.WARNING, logger="claimshield.predict"):
+    with caplog.at_level(logging.WARNING, logger="claimx.predict"):
         result = md.run(db, tmp_path / "metrics.json")
     assert result.metrics["status"] == "Insufficient data"
     assert result.metrics["pr_auc"] is None and result.scores.empty
@@ -358,7 +358,7 @@ def test_missing_model_output_is_logged_and_cases_still_build(pipeline, tmp_path
     con.execute("DROP TABLE investigation_risk")
     con.commit()
     con.close()
-    with caplog.at_level(logging.WARNING, logger="claimshield.cases"):
+    with caplog.at_level(logging.WARNING, logger="claimx.cases"):
         cases = builder.build_cases(db)
     assert cases and all(c.investigation_risk is None for c in cases)
     assert "no investigation_risk table" in caplog.text

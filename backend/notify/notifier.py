@@ -21,7 +21,7 @@ from botocore.config import Config
 from backend.brief.generate import resolve_setting
 from backend.notify.store import NotifyStore
 
-log = logging.getLogger("claimshield.notify")
+log = logging.getLogger("claimx.notify")
 SNS_TIMEOUT_SECONDS = 5
 DEFAULT_BASE_URL = "http://localhost:5173"
 

@@ -13,7 +13,7 @@ from backend.access.security import MIN_PASSWORD_LENGTH, hash_password
 from backend.access.store import AccessStore
 from backend.brief.generate import resolve_setting
 
-log = logging.getLogger("claimshield.access")
+log = logging.getLogger("claimx.access")
 
 DEMO_UNITS = {
     "Unit South": ["Chennai", "Bengaluru", "Hyderabad"],

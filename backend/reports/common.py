@@ -84,7 +84,7 @@ def render(story: list, title: str) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A4, leftMargin=MARGIN, rightMargin=MARGIN, topMargin=14 * mm,
-        bottomMargin=24 * mm, title=clean(title), author="ClaimShield Nexus",
+        bottomMargin=24 * mm, title=clean(title), author="Claim-X",
     )  # fmt: skip
     on_page = _decorate(title)
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)

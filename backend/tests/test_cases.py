@@ -275,7 +275,7 @@ def test_rerunning_replaces_the_cases_table(world, tmp_path):
 def test_missing_findings_produce_no_cases_and_a_log(tmp_path, caplog):
     db = tmp_path / "bare.db"
     gen.generate(db, tmp_path / "t.csv")  # no rules, anomaly or graph run
-    with caplog.at_level(logging.WARNING, logger="claimshield.cases"):
+    with caplog.at_level(logging.WARNING, logger="claimx.cases"):
         assert builder.build_cases(db) == []
         assert ranking.run(db).ranked.empty
     assert "Insufficient data" in caplog.text

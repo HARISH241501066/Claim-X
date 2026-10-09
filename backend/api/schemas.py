@@ -1,4 +1,4 @@
-"""Pydantic response and request models for the ClaimShield API."""
+"""Pydantic response and request models for the Claim-X API."""
 
 from __future__ import annotations
 

@@ -209,7 +209,7 @@ def test_duplicate_differing_code_is_not_a_duplicate(world):
 def test_upcoding_reports_insufficient_data_instead_of_guessing(world, caplog):
     gm = world["tables"]["claims"].query("provider_id in ['PRV-005','PRV-001','PRV-002']")
     ctx = fixture_ctx(world, gm)  # only two peers per provider
-    with caplog.at_level(logging.INFO, logger="claimshield.detect.upcoding"):
+    with caplog.at_level(logging.INFO, logger="claimx.detect.upcoding"):
         assert UpcodingRule().evaluate(gm, ctx) == []
     assert "Insufficient data" in caplog.text
 
@@ -289,7 +289,7 @@ class JunkRule(Rule):
 
 def test_a_rule_that_raises_is_skipped_and_logged(world, caplog):
     rules = [BoomRule(), JunkRule(), DuplicateRule()]
-    with caplog.at_level(logging.ERROR, logger="claimshield.detect"):
+    with caplog.at_level(logging.ERROR, logger="claimx.detect"):
         result = engine.run_rules(world["tables"]["claims"], world["ctx"], rules)
     assert set(result.errors) == {"boom", "junk"}
     assert "kaboom" in result.errors["boom"]
@@ -300,7 +300,7 @@ def test_a_rule_that_raises_is_skipped_and_logged(world, caplog):
 
 def test_a_rule_module_that_fails_to_import_is_skipped_and_logged(caplog):
     broken = temp_rule_file("zz_broken_rule", "raise RuntimeError('bad module')\n")
-    with broken, caplog.at_level(logging.ERROR, logger="claimshield.detect"):
+    with broken, caplog.at_level(logging.ERROR, logger="claimx.detect"):
         names = [r.name for r in engine.load_rules()]
     assert "duplicate" in names
     assert "zz_broken_rule: import failed" in caplog.text

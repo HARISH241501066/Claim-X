@@ -1,4 +1,4 @@
-"""Synthetic data generator for ClaimShield Nexus (synthetic data only, seed 42).
+"""Synthetic data generator for Claim-X (synthetic data only, seed 42).
 
 Normal behaviour is generated first, then one inject_* function per planted scenario.
 Outputs: a SQLite database and ground_truth.csv (entity_id, scenario). The ground truth is
@@ -26,7 +26,7 @@ SEED = 42
 START = date(2026, 1, 1)
 END = date(2026, 6, 30)
 WINDOW = (START, END)
-DB_PATH = Path(__file__).resolve().parents[1] / "claimshield.db"
+DB_PATH = Path(__file__).resolve().parents[1] / "claimx.db"
 TRUTH_PATH = Path(__file__).resolve().parents[1] / "ground_truth.csv"
 
 TARGETS = {

@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pandas as pd
 
-log = logging.getLogger("claimshield.features")
-DB_PATH = Path(__file__).resolve().parents[1] / "claimshield.db"
+log = logging.getLogger("claimx.features")
+DB_PATH = Path(__file__).resolve().parents[1] / "claimx.db"
 WINDOW_DAYS = 181  # 2026-01-01 .. 2026-06-30
 
 FEATURES = [

@@ -20,7 +20,7 @@ from backend.notify import emails
 from backend.notify.notifier import Message, Notifier, NotifyConfig
 from backend.notify.store import NotifyStore
 
-log = logging.getLogger("claimshield.alerts")
+log = logging.getLogger("claimx.alerts")
 CRITICAL_DETECTORS = {"phantom"}  # a service that never happened is treated as critical
 EMAIL_TOP_RANKS = 3
 HIGH_TOP_RANKS = 5

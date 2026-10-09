@@ -16,7 +16,7 @@ from backend.notify.notifier import NotifyConfig, SnsEmailNotifier
 from backend.notify.store import NotifyStore
 from backend.tests.auth_helpers import login
 
-ARN = "arn:aws:sns:ap-south-1:123456789012:claimshield-test"
+ARN = "arn:aws:sns:ap-south-1:123456789012:claimx-test"
 BASE = "https://app.example.test"
 CONFIG = NotifyConfig(email_enabled=True, topic_arn=ARN, region="ap-south-1", base_url=BASE)
 T0 = datetime(2026, 10, 8, 9, 0, tzinfo=UTC)
@@ -40,7 +40,7 @@ class FakeSns:
 
 @pytest.fixture(scope="module")
 def shared(tmp_path_factory):
-    return pipeline.run_all(tmp_path_factory.mktemp("m9b") / "claimshield.db")
+    return pipeline.run_all(tmp_path_factory.mktemp("m9b") / "claimx.db")
 
 
 @pytest.fixture
@@ -150,7 +150,7 @@ def test_the_email_holds_only_the_case_id_rank_detector_count_and_link(shared, p
         subject, body = call["Subject"], call["Message"]
         case_id = re.search(r"CASE-\d{4}", subject).group(0)
         case = shared.case(case_id)
-        assert subject == f"ClaimShield: high-priority case {case_id} awaiting review"
+        assert subject == f"Claim-X: high-priority case {case_id} awaiting review"
         assert f"Case: {case_id}" in body and f"Priority rank: {rank[case_id]}" in body
         assert f"Detectors agreeing: {len(case.detectors_fired)}" in body
         assert f"{BASE}/cases/{case_id}" in body
@@ -313,7 +313,7 @@ def test_the_test_email_endpoint_reports_success_and_the_error(api, monkeypatch)
     ok = client.post("/admin/test-email").json()
     assert ok["ok"] is True and ok["status"] == "sent"
     sent = sns.calls[-1]
-    assert sent["Subject"] == "ClaimShield: test email" and not RECORD_ID.search(sent["Message"])
+    assert sent["Subject"] == "Claim-X: test email" and not RECORD_ID.search(sent["Message"])
     assert "CASE-" not in sent["Message"]
     sns.exc = RuntimeError("secret detail")
     bad = client.post("/admin/test-email").json()

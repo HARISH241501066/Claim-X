@@ -9,7 +9,7 @@ import pandas as pd
 from backend.detect.base import Finding, Rule
 from backend.detect.context import MIN_CONSULT_CLAIMS, Context
 
-log = logging.getLogger("claimshield.detect.upcoding")
+log = logging.getLogger("claimx.detect.upcoding")
 Z_THRESHOLD = 3.0
 MIN_EXCESS = 0.25  # share must also exceed the peer mean by this much (practical significance)
 

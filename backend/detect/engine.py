@@ -16,9 +16,9 @@ import pandas as pd
 from backend.detect.base import Finding, Rule
 from backend.detect.context import Context, load_tables
 
-log = logging.getLogger("claimshield.detect")
+log = logging.getLogger("claimx.detect")
 RULES_PACKAGE = "backend.detect.rules"
-DB_PATH = Path(__file__).resolve().parents[1] / "claimshield.db"
+DB_PATH = Path(__file__).resolve().parents[1] / "claimx.db"
 
 FINDINGS_DDL = """
 CREATE TABLE findings (

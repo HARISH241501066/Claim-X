@@ -6,7 +6,7 @@ export const http = axios.create({ baseURL: API_URL, timeout: 60000 })
 
 // The sign-in token: kept in memory and in sessionStorage (so a reload keeps you signed in, and
 // closing the tab signs you out). The API checks it on every request; the screens only reflect that.
-const TOKEN_KEY = 'claimshield.token'
+const TOKEN_KEY = 'claimx.token'
 let token = null
 let onUnauthorized = () => {}
 try {

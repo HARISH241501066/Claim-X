@@ -31,7 +31,7 @@ PATHS = {
 def shared(tmp_path_factory):
     """One real pipeline run, reused by every test that does not need its own."""
     folder = tmp_path_factory.mktemp("m8")
-    return pipeline.run_all(folder / "claimshield.db")
+    return pipeline.run_all(folder / "claimx.db")
 
 
 @pytest.fixture
@@ -444,7 +444,7 @@ def test_rerun_swaps_database_files_and_keeps_the_audit(tmp_path):
     app = create_app(data_dir=tmp_path, audit_path=tmp_path / "audit.db")
     with TestClient(app) as c:
         rt = app.state.runtime
-        assert rt.active == 0 and (tmp_path / "claimshield.db").exists()
+        assert rt.active == 0 and (tmp_path / "claimx.db").exists()
         login(c)
         c.post(f"/cases/{RING}/decision", json=GOOD)
         c.get(f"/cases/{RING}/brief")
@@ -452,7 +452,7 @@ def test_rerun_swaps_database_files_and_keeps_the_audit(tmp_path):
         login(c, "admin")
         response = c.post("/admin/rerun")
         assert response.status_code == 200 and response.json()["status"] == "ok"
-        assert rt.active == 1 and (tmp_path / "claimshield.alt.db").exists()
+        assert rt.active == 1 and (tmp_path / "claimx.alt.db").exists()
         assert rt.state.finished_at >= first_run  # a fresh run replaced the served state
         assert rt.briefs == {}  # cached briefs are dropped
         assert c.get(f"/cases/{RING}").json()["status"] == "Escalated for investigation"
@@ -494,7 +494,7 @@ def test_a_failing_stage_is_skipped_and_reported_as_degraded(tmp_path, monkeypat
         raise RuntimeError("model exploded")
 
     monkeypatch.setattr(pipeline.risk_model, "run_all", boom)
-    with caplog.at_level(logging.ERROR, logger="claimshield.pipeline"):
+    with caplog.at_level(logging.ERROR, logger="claimx.pipeline"):
         state = pipeline.run_all(tmp_path / "x.db")
     assert state.status == "degraded"
     failed = [t for t in state.timings if t.status == "failed"]
@@ -521,7 +521,7 @@ def test_pipeline_logs_timings_and_writes_no_ground_truth(shared, tmp_path_facto
     assert shared.total_seconds >= sum(t.seconds for t in shared.timings) - 0.5
     assert not list(shared.db_path.parent.glob("*.csv"))  # the test-only ground truth is not made
     folder = tmp_path_factory.mktemp("log")
-    with caplog.at_level(logging.INFO, logger="claimshield.pipeline"):
+    with caplog.at_level(logging.INFO, logger="claimx.pipeline"):
         pipeline.run_all(folder / "y.db")
     assert all(f"stage {name}" in caplog.text for name in pipeline.STAGE_NAMES)
 

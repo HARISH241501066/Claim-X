@@ -21,7 +21,7 @@ RING = "CASE-0001"
 
 @pytest.fixture(scope="module")
 def shared(tmp_path_factory):
-    return pipeline.run_all(tmp_path_factory.mktemp("ruletype") / "claimshield.db")
+    return pipeline.run_all(tmp_path_factory.mktemp("ruletype") / "claimx.db")
 
 
 @pytest.fixture(scope="module")

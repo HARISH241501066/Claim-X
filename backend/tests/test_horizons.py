@@ -38,7 +38,7 @@ def built(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def shared(tmp_path_factory):
-    return pipeline.run_all(tmp_path_factory.mktemp("horizons_api") / "claimshield.db")
+    return pipeline.run_all(tmp_path_factory.mktemp("horizons_api") / "claimx.db")
 
 
 # ------------------------------------------------------------ which history each window learns from

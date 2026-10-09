@@ -31,7 +31,7 @@ from backend.brief.masker import LeakError, Vault, audit_record, unmask_text
 from backend.brief.template import FINAL_LINE, SECTIONS, render_template
 from backend.brief.validator import validate_brief
 
-log = logging.getLogger("claimshield.brief")
+log = logging.getLogger("claimx.brief")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MAX_TOKENS = 8000
 REQUEST_TIMEOUT_SECONDS = 15.0

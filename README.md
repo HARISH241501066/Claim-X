@@ -1,4 +1,4 @@
-# ClaimShield Nexus
+# Claim-X
 
 [![CI](https://github.com/HARISH241501066/Claim-X/actions/workflows/ci.yml/badge.svg)](https://github.com/HARISH241501066/Claim-X/actions/workflows/ci.yml)
 
@@ -186,7 +186,7 @@ Copy `.env.example` to `.env` (git-ignored). Every setting is listed there, empt
 | `JWT_SECRET`, `DEMO_PASSWORD` | Running the app (required) |
 | `LLM_PROVIDER` (`groq`, `xai`, `anthropic`; default `none`), `LLM_API_KEY`, `LLM_MODEL` | AI-written briefs; without them the template writes every brief |
 | `NOTIFY_EMAIL_ENABLED`, `SNS_TOPIC_ARN`, `AWS_REGION`, `APP_BASE_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Urgent-case email through AWS SNS (key needs only `sns:Publish` on the topic) |
-| `CLAIMSHIELD_AUDIT_PATH`, `VITE_API_URL` | Optional: another audit file; another API address for the web app |
+| `CLAIMX_AUDIT_PATH`, `VITE_API_URL` | Optional: another audit file; another API address for the web app |
 
 ## Known limitations
 

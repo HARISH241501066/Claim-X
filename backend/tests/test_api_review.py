@@ -16,7 +16,7 @@ GOOD = {"action": "escalate_for_investigation", "reason": "Ring pattern looks co
 
 @pytest.fixture(scope="module")
 def shared(tmp_path_factory):
-    return pipeline.run_all(tmp_path_factory.mktemp("m9") / "claimshield.db")
+    return pipeline.run_all(tmp_path_factory.mktemp("m9") / "claimx.db")
 
 
 @pytest.fixture
@@ -223,7 +223,7 @@ def test_override_on_an_unknown_case_is_404(client):
 
 def test_the_audit_file_location_can_come_from_the_environment(shared, tmp_path, monkeypatch):
     target = tmp_path / "elsewhere" / "env_audit.db"
-    monkeypatch.setenv("CLAIMSHIELD_AUDIT_PATH", str(target))
+    monkeypatch.setenv("CLAIMX_AUDIT_PATH", str(target))
     with TestClient(create_app(data_dir=tmp_path, runner=lambda p: shared)) as c:
         login(c)
         c.post(f"/cases/{RING}/decision", json=GOOD)

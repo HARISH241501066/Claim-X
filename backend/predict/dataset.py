@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pandas as pd
 
-log = logging.getLogger("claimshield.predict")
-DB_PATH = Path(__file__).resolve().parents[1] / "claimshield.db"
+log = logging.getLogger("claimx.predict")
+DB_PATH = Path(__file__).resolve().parents[1] / "claimx.db"
 
 WINDOW_START = date(2026, 1, 1)
 DATA_END = date(2026, 6, 30)
