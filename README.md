@@ -125,7 +125,7 @@ The risk models are evaluated alone, one per window, on each window's last held-
 
 Read these with care. There are only 40 providers, and the history is six months long, so each window has a handful of positives. A longer window sees more investigations (a higher base rate), which is why its numbers look better; they check that the pipeline works, not real-world accuracy. The 60- and 90-day models also learn from 31 January (a row with under 60 days of history), because their labels need a long observed window. A transparent history rule backs the models: a repeat offender is raised to High in every window and the band says so (`band_source: escalated`). The three models are separate, so a longer window can come out lower than a shorter one; the screen then says so instead of changing the number.
 
-Backend tests: 513 passing (run with no network access), coverage 97% of `backend/`. Frontend: unit tests plus a real-Chrome end-to-end run.
+Backend tests: 527 passing (run with no network access), coverage 97% of `backend/`. Frontend: unit tests plus a real-Chrome end-to-end run.
 
 ## Responsible AI
 
